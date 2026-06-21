@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    /* Language and environment */
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+
+    /* Module resolution */
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "rivmux-player": ["packages/player/src/index.ts"],
+      "rivmux-runtime-worker": ["packages/runtime-worker/src/worker-entry.ts"],
+      "rivmux-shared": ["packages/shared/src/index.ts"]
+    },
+
+    /* Bundler mode */
+    "allowImportingTsExtensions": false,
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    /* Type checking */
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+
+  /* Workspace package graph */
+  "files": [],
+  "references": [{ "path": "./packages/shared" }, { "path": "./packages/runtime-worker" }, { "path": "./packages/player" }]
+}
