@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "rootDir": "./src",
+    "outDir": "./node_modules/.tmp/types",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo"
+  },
+  "references": [{ "path": "../protocol" }],
+  "include": ["src/**/*"],
+  "exclude": ["dist"]
+}

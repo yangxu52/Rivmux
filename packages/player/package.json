@@ -1,0 +1,38 @@
+{
+  "name": "rivmux-player",
+  "version": "0.0.1",
+  "description": "Public player package for Rivmux.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "clean": "rimraf dist node_modules/.tmp"
+  },
+  "dependencies": {
+    "rivmux-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0",
+    "pnpm": ">=10.0.0"
+  }
+}
