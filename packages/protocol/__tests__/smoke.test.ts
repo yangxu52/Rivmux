@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from 'vitest'
 
-import type { PlayerEventMap, RivmuxPlayerOptions } from '../src/index'
+import type { PlayerEventMap, RivmuxPlayerOptions, WorkerCommand, WorkerMessage } from '../src/index'
 
 describe('shared contracts', () => {
   it('exposes the player options contract', () => {
@@ -14,5 +14,10 @@ describe('shared contracts', () => {
 
   it('exposes the player event map contract', () => {
     expectTypeOf<PlayerEventMap['ready']>().toEqualTypeOf<undefined>()
+  })
+
+  it('exposes the worker protocol contract', () => {
+    expectTypeOf<WorkerCommand>().toMatchTypeOf<{ type: string }>()
+    expectTypeOf<WorkerMessage>().toMatchTypeOf<{ type: string }>()
   })
 })

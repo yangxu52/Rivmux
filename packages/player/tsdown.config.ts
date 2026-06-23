@@ -1,7 +1,10 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    'rivmux-runtime-worker': '../runtime-worker/src/worker-entry.ts',
+  },
   format: 'esm',
   outDir: 'dist',
   sourcemap: true,

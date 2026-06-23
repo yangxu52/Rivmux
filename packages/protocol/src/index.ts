@@ -40,6 +40,36 @@ export type RivmuxPlayerOptions = {
   diagnostics?: DiagnosticsOptions
 }
 
+export type NormalizedPlaybackOptions = Required<PlaybackOptions>
+
+export type NormalizedLatencyOptions = Required<LatencyOptions>
+
+export type NormalizedNetworkOptions = {
+  headers: Record<string, string>
+  credentials: RequestCredentials
+  retry: {
+    maxAttempts: number
+    backoffMs: number
+  }
+}
+
+export type NormalizedRuntimeOptions = {
+  preferWorkerMse: boolean
+  workerUrl?: string
+  wasmUrl?: string
+  wasmModule?: WebAssembly.Module
+}
+
+export type NormalizedDiagnosticsOptions = Required<DiagnosticsOptions>
+
+export type NormalizedRivmuxPlayerOptions = {
+  playback: NormalizedPlaybackOptions
+  latency: NormalizedLatencyOptions
+  network: NormalizedNetworkOptions
+  runtime: NormalizedRuntimeOptions
+  diagnostics: NormalizedDiagnosticsOptions
+}
+
 export type MediaInfo = {
   container: string
   videoCodec?: string
@@ -53,7 +83,11 @@ export type MediaInfo = {
 export type PlayerStats = {
   bytesReceived?: number
   currentNetworkSpeed?: number
+  outputBytes?: number
   appendQueueLength?: number
+  sourceBufferUpdating?: boolean
+  bufferedStart?: number
+  bufferedEnd?: number
   bufferedDuration?: number
   liveLatency?: number
   playbackRate?: number
@@ -89,3 +123,21 @@ export type PlayerEventMap = {
 export type PlayerEventType = keyof PlayerEventMap
 
 export type PlayerEventListener<T extends PlayerEventType> = (payload: PlayerEventMap[T]) => void
+
+export type WorkerCommand =
+  | { type: 'init'; id: string; url: string; options: NormalizedRivmuxPlayerOptions }
+  | { type: 'attach-media-source' }
+  | { type: 'start' }
+  | { type: 'stop' }
+  | { type: 'update-options'; options: Partial<NormalizedRivmuxPlayerOptions> }
+  | { type: 'destroy' }
+
+export type WorkerMessage =
+  | { type: 'ready' }
+  | { type: 'media-source-handle'; handle: MediaSourceHandle }
+  | { type: 'media-info'; mediaInfo: MediaInfo }
+  | { type: 'stats'; stats: PlayerStats }
+  | { type: 'warning'; warning: PlayerWarning }
+  | { type: 'error'; error: PlayerError }
+  | { type: 'stopped' }
+  | { type: 'destroyed' }

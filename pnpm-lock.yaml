@@ -71,6 +71,9 @@ importers:
 
   packages/player:
     dependencies:
+      rivmux-runtime-worker:
+        specifier: workspace:*
+        version: link:../runtime-worker
       rivmux-protocol:
         specifier: workspace:*
         version: link:../protocol
