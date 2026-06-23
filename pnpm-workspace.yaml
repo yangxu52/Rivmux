@@ -2,6 +2,7 @@ packages:
   - packages/*
 
 catalog:
+  '@vitest/browser-playwright': ^4.1.9
   'tsdown': ^0.22.3
   'typescript': ~5.9.3
   'vitest': ^4.1.9

@@ -14,7 +14,7 @@
     "build:crates": "cargo build --workspace",
     "test": "pnpm run test:packages && pnpm run test:workspace && pnpm run test:crates",
     "test:packages": "pnpm -r --filter './packages/*' run test",
-    "test:workspace": "vitest run --config vitest.config.ts",
+    "test:workspace": "pnpm run build && vitest run --config vitest.config.ts",
     "test:crates": "cargo test --workspace",
     "clean": "pnpm -r --filter './packages/*' run clean",
     "typecheck": "tsc -b && cargo check --workspace",
@@ -31,6 +31,7 @@
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^9.39.4",
+    "@vitest/browser-playwright": "catalog:",
     "conventional-changelog": "^7.2.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
@@ -42,8 +43,8 @@
     "prettier": "^3.8.3",
     "rimraf": "^6.1.3",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "typescript-eslint": "^8.59.0"
+    "typescript-eslint": "^8.59.0",
+    "vitest": "catalog:"
   },
   "engines": {
     "node": "^22.18.0 || >=24.11.0",
