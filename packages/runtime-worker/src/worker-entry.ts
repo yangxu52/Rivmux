@@ -4,9 +4,11 @@ import type { WorkerCommand } from 'rivmux-protocol'
 
 export { RuntimeWorker } from './runtime'
 export { M1_VIDEO_MIME, createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
+export { HttpFlvLoader, HttpFlvLoaderError } from './loader/http-flv-loader'
 export { MseController } from './mse/mse-controller'
 export { SourceBufferQueue } from './mse/source-buffer-queue'
 export { isMseSupported } from './mse/mime'
+export type { StreamChunk, StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
 
 type DedicatedWorkerScopeLike = {
   addEventListener(type: 'message', listener: (event: MessageEvent<WorkerCommand>) => void): void
