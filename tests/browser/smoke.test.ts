@@ -13,6 +13,11 @@ type TestStreamStats = Record<
   }
 >
 
+type WasmStatus = {
+  available: boolean
+  wasmUrl: string
+}
+
 describe('Rivmux browser runtime', () => {
   it('plays the static fMP4 fixture through the packaged worker path', async () => {
     await resetTestStreams()
@@ -38,6 +43,47 @@ describe('Rivmux browser runtime', () => {
         width: 320,
         height: 240,
       })
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
+
+  it('loads the wasm transmux core and appends fMP4 segments from an HTTP-FLV stream', async () => {
+    await resetTestStreams()
+    const wasmStatus = await readWasmStatus()
+    expect(wasmStatus.available).toBe(true)
+
+    const video = createVideo()
+    const player = createPlayer('m4-core', {
+      autoPlay: false,
+      wasmUrl: wasmStatus.wasmUrl,
+      fixture: 'h264',
+    })
+    const errors: unknown[] = []
+    const mediaInfo: unknown[] = []
+    const stats: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+    player.on('mediaInfo', (info) => mediaInfo.push(info))
+    player.on('stats', (entry) => stats.push(entry))
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitForCoreSignal(errors, () => mediaInfo.some((info) => isRecord(info) && info.container === 'flv' && info.videoCodec === 'avc1.42C01E'))
+      await waitForCoreSignal(errors, () => stats.some((entry) => isRecord(entry) && typeof entry.outputBytes === 'number' && entry.outputBytes > 0))
+
+      expect(errors).toStrictEqual([])
+      expect(mediaInfo).toContainEqual({
+        container: 'flv',
+        videoCodec: 'avc1.42C01E',
+      })
+      expect(stats).toContainEqual(
+        expect.objectContaining({
+          outputBytes: expect.any(Number),
+        })
+      )
     } finally {
       await player.destroy()
       video.remove()
@@ -75,10 +121,15 @@ describe('Rivmux browser runtime', () => {
   })
 })
 
-function createPlayer(streamId: string): RivmuxPlayer {
-  return new RivmuxPlayer(new URL(`/__rivmux-test/stream/${streamId}.flv`, window.location.href).href, {
+function createPlayer(streamId: string, options: { autoPlay?: boolean; wasmUrl?: string; fixture?: string } = {}): RivmuxPlayer {
+  const url = new URL(`/__rivmux-test/stream/${streamId}.flv`, window.location.href)
+  if (options.fixture !== undefined) {
+    url.searchParams.set('fixture', options.fixture)
+  }
+
+  return new RivmuxPlayer(url.href, {
     playback: {
-      autoPlay: true,
+      autoPlay: options.autoPlay ?? true,
       muted: true,
     },
     network: {
@@ -87,6 +138,9 @@ function createPlayer(streamId: string): RivmuxPlayer {
         maxAttempts: 1,
         backoffMs: 0,
       },
+    },
+    runtime: {
+      wasmUrl: options.wasmUrl,
     },
   })
 }
@@ -145,6 +199,16 @@ async function readStreamStats(): Promise<TestStreamStats> {
   return JSON.parse(text) as TestStreamStats
 }
 
+async function readWasmStatus(): Promise<WasmStatus> {
+  const response = await fetch('/__rivmux-test/wasm/status', { cache: 'no-store' })
+  const text = await response.text()
+  if (!response.ok || text.length === 0) {
+    throw new Error(`Failed to read WASM test status. status=${response.status} body=${text}`)
+  }
+
+  return JSON.parse(text) as WasmStatus
+}
+
 async function waitForStreamState(ids: string[], predicate: (stats: TestStreamStats[string][]) => boolean): Promise<void> {
   await waitFor(async () => {
     const stats = await readStreamStats()
@@ -164,4 +228,18 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
   }
 
   throw new Error('Timed out waiting for condition.')
+}
+
+async function waitForCoreSignal(errors: unknown[], predicate: () => boolean | Promise<boolean>): Promise<void> {
+  await waitFor(async () => {
+    if (errors.length > 0) {
+      throw new Error(`Worker emitted error: ${JSON.stringify(errors.at(-1))}`)
+    }
+
+    return predicate()
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

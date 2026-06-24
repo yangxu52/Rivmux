@@ -1,3 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { createM1StaticFmp4Fixture } from '../../../packages/runtime-worker/src/fixtures/m1-static-fmp4'
+
+import type { ServerResponse } from 'node:http'
 import type { Plugin } from 'vitest/config'
 
 type StreamState = {
@@ -10,6 +16,7 @@ type StreamState = {
 
 export function createBrowserTestServer(): Plugin {
   const streamStates = new Map<string, StreamState>()
+  const wasmPackageDir = join(process.cwd(), 'target/tmp/rivmux-transmux-core-wasm-pkg')
 
   return {
     name: 'rivmux-browser-test-server',
@@ -33,6 +40,33 @@ export function createBrowserTestServer(): Plugin {
           return
         }
 
+        if (url.pathname === '/__rivmux-test/wasm/status') {
+          const wasmUrl = '/__rivmux-test/wasm/rivmux_transmux_core_bg.wasm'
+          const gluePath = join(wasmPackageDir, 'rivmux_transmux_core.js')
+          const wasmPath = join(wasmPackageDir, 'rivmux_transmux_core_bg.wasm')
+          response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-type': 'application/json; charset=utf-8',
+          })
+          response.end(
+            JSON.stringify({
+              available: existsSync(gluePath) && existsSync(wasmPath),
+              wasmUrl,
+            })
+          )
+          return
+        }
+
+        if (url.pathname === '/__rivmux-test/wasm/rivmux_transmux_core.js') {
+          serveFile(response, join(wasmPackageDir, 'rivmux_transmux_core.js'), 'application/javascript; charset=utf-8')
+          return
+        }
+
+        if (url.pathname === '/__rivmux-test/wasm/rivmux_transmux_core_bg.wasm') {
+          serveFile(response, join(wasmPackageDir, 'rivmux_transmux_core_bg.wasm'), 'application/wasm')
+          return
+        }
+
         const match = /^\/__rivmux-test\/stream\/([^/]+)\.flv$/.exec(url.pathname)
         if (match === null) {
           next()
@@ -50,8 +84,9 @@ export function createBrowserTestServer(): Plugin {
           'content-type': 'video/x-flv',
         })
 
-        const chunk = new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
-        const writeChunk = () => {
+        const isCoreFixture = url.searchParams.get('fixture') === 'h264'
+        const chunk = isCoreFixture ? createCoreH264FlvFixture() : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
+        const writeChunk = (): void => {
           if (response.writableEnded) {
             return
           }
@@ -62,9 +97,11 @@ export function createBrowserTestServer(): Plugin {
         }
 
         writeChunk()
-        const interval = setInterval(writeChunk, 50)
+        const interval = isCoreFixture ? undefined : setInterval(writeChunk, 50)
         request.on('close', () => {
-          clearInterval(interval)
+          if (interval !== undefined) {
+            clearInterval(interval)
+          }
           state.active = false
           state.closed += 1
         })
@@ -88,4 +125,184 @@ function getStreamState(streamStates: Map<string, StreamState>, id: string): Str
   }
   streamStates.set(id, state)
   return state
+}
+
+function serveFile(response: ServerResponse, path: string, contentType: string): void {
+  if (!existsSync(path)) {
+    response.writeHead(404, {
+      'cache-control': 'no-store',
+      'content-type': 'text/plain; charset=utf-8',
+    })
+    response.end(`Missing test asset: ${path}`)
+    return
+  }
+
+  response.writeHead(200, {
+    'cache-control': 'no-store',
+    'content-type': contentType,
+  })
+  response.end(readFileSync(path))
+}
+
+let cachedCoreH264FlvFixture: Uint8Array | undefined
+
+function createCoreH264FlvFixture(): Uint8Array {
+  cachedCoreH264FlvFixture ??= buildCoreH264FlvFixture()
+  return cachedCoreH264FlvFixture
+}
+
+function buildCoreH264FlvFixture(): Uint8Array {
+  const fixture = createM1StaticFmp4Fixture()
+  const initSegment = new Uint8Array(fixture.initSegment)
+  const mediaSegment = new Uint8Array(fixture.mediaSegment)
+  const avcc = findBoxPayload(initSegment, 'avcC')
+  const idrSample = findFirstVideoSample(mediaSegment)
+
+  return concatBytes([new Uint8Array([0x46, 0x4c, 0x56, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0]), videoSequenceHeaderTag(avcc), videoSampleTag(0, true, 0, idrSample)])
+}
+
+function videoSequenceHeaderTag(avcc: Uint8Array): Uint8Array {
+  return rawFlvTag(9, 0, concatBytes([new Uint8Array([0x17, 0, 0, 0, 0]), avcc]))
+}
+
+function videoSampleTag(timestampMs: number, isKeyframe: boolean, compositionTimeMs: number, sample: Uint8Array): Uint8Array {
+  return rawFlvTag(9, timestampMs, concatBytes([new Uint8Array([isKeyframe ? 0x17 : 0x27, 1, ...i24(compositionTimeMs)]), sample]))
+}
+
+function rawFlvTag(tagType: number, timestampMs: number, payload: Uint8Array): Uint8Array {
+  const previousTagSize = 11 + payload.byteLength
+  return concatBytes([
+    new Uint8Array([tagType, ...u24(payload.byteLength), ...u24(timestampMs & 0x00ff_ffff), (timestampMs >> 24) & 0xff, 0, 0, 0]),
+    payload,
+    new Uint8Array([(previousTagSize >> 24) & 0xff, (previousTagSize >> 16) & 0xff, (previousTagSize >> 8) & 0xff, previousTagSize & 0xff]),
+  ])
+}
+
+function findFirstVideoSample(mediaSegment: Uint8Array): Uint8Array {
+  const trun = findBox(mediaSegment, 'trun')
+  const mdat = findBox(mediaSegment, 'mdat')
+  if (trun === undefined || mdat === undefined) {
+    throw new Error('M1 fMP4 fixture is missing trun or mdat.')
+  }
+
+  const flags = readU24(mediaSegment, trun.offset + 9)
+  const sampleCount = readU32(mediaSegment, trun.offset + 12)
+  let offset = trun.offset + 16
+  if ((flags & 0x000001) !== 0) {
+    offset += 4
+  }
+  if ((flags & 0x000004) !== 0) {
+    offset += 4
+  }
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    if ((flags & 0x000100) !== 0) {
+      offset += 4
+    }
+    const sampleSize = (flags & 0x000200) === 0 ? undefined : readU32(mediaSegment, offset)
+    if ((flags & 0x000200) !== 0) {
+      offset += 4
+    }
+    if ((flags & 0x000400) !== 0) {
+      offset += 4
+    }
+    if ((flags & 0x000800) !== 0) {
+      offset += 4
+    }
+
+    if (index === 0) {
+      if (sampleSize === undefined) {
+        throw new Error('M1 fMP4 fixture trun does not include sample sizes.')
+      }
+      const sampleOffset = mdat.offset + 8
+      return mediaSegment.slice(sampleOffset, sampleOffset + sampleSize)
+    }
+  }
+
+  throw new Error('M1 fMP4 fixture does not contain video samples.')
+}
+
+function findBoxPayload(bytes: Uint8Array, type: string): Uint8Array {
+  const box = findBox(bytes, type)
+  if (box === undefined) {
+    throw new Error(`M1 fMP4 fixture is missing ${type}.`)
+  }
+
+  return bytes.slice(box.offset + 8, box.offset + box.size)
+}
+
+type Mp4Box = {
+  offset: number
+  size: number
+}
+
+function findBox(bytes: Uint8Array, type: string, start = 0, end = bytes.byteLength): Mp4Box | undefined {
+  let offset = start
+  while (offset + 8 <= end) {
+    const size = readU32(bytes, offset)
+    if (size < 8 || offset + size > end) {
+      return undefined
+    }
+
+    const boxType = readBoxType(bytes, offset)
+    if (boxType === type) {
+      return { offset, size }
+    }
+
+    const childStart = childBoxStart(boxType, offset)
+    if (childStart !== undefined && childStart < offset + size) {
+      const child = findBox(bytes, type, childStart, offset + size)
+      if (child !== undefined) {
+        return child
+      }
+    }
+
+    offset += size
+  }
+
+  return undefined
+}
+
+function childBoxStart(type: string, offset: number): number | undefined {
+  if (type === 'stsd') {
+    return offset + 16
+  }
+  if (type === 'avc1') {
+    return offset + 86
+  }
+  if (['moov', 'trak', 'mdia', 'minf', 'stbl', 'moof', 'traf'].includes(type)) {
+    return offset + 8
+  }
+  return undefined
+}
+
+function readBoxType(bytes: Uint8Array, offset: number): string {
+  return String.fromCharCode(...bytes.subarray(offset + 4, offset + 8))
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0) * 0x01_00_00_00 + ((bytes[offset + 1] ?? 0) << 16) + ((bytes[offset + 2] ?? 0) << 8) + (bytes[offset + 3] ?? 0)
+}
+
+function readU24(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] ?? 0) << 16) | ((bytes[offset + 1] ?? 0) << 8) | (bytes[offset + 2] ?? 0)
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)
+  const output = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return output
+}
+
+function u24(value: number): [number, number, number] {
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+}
+
+function i24(value: number): [number, number, number] {
+  return u24(value & 0x00ff_ffff)
 }

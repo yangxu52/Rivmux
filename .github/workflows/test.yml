@@ -37,6 +37,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Setup wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

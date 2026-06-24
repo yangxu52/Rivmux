@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { WasmTransmuxCoreHost, coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, normalizeCoreEvents } from '../src/wasm/rivmux-transmux-wasm'
+import { createWasmTransmuxCoreHost, toWasmBindgenGlueUrl } from '../src/wasm/wasm-loader'
 
 describe('runtime transmux core host', () => {
   it('normalizes wasm event arrays', () => {
@@ -109,6 +110,18 @@ describe('runtime transmux core host', () => {
     expect(MockWasmTransmuxCore.instance?.chunks).toStrictEqual([new Uint8Array([1, 2])])
     expect(MockWasmTransmuxCore.instance?.resetCount).toBe(1)
     expect(MockWasmTransmuxCore.instance?.destroyCount).toBe(1)
+  })
+
+  it('keeps optional wasm host creation for tests and fallback paths', () => {
+    expect(createWasmTransmuxCoreHost(undefined)).toBeUndefined()
+    expect(createWasmTransmuxCoreHost(MockWasmTransmuxCore)).toBeInstanceOf(WasmTransmuxCoreHost)
+  })
+
+  it('resolves wasm-bindgen glue next to the wasm asset', () => {
+    expect(toWasmBindgenGlueUrl('https://cdn.example.test/rivmux_transmux_core_bg.wasm')).toBe('https://cdn.example.test/rivmux_transmux_core.js')
+    expect(toWasmBindgenGlueUrl('https://cdn.example.test/rivmux-transmux-core.wasm?version=1')).toBe(
+      'https://cdn.example.test/rivmux-transmux-core.js?version=1'
+    )
   })
 })
 

@@ -29,7 +29,7 @@ export default defineConfig([
       },
     },
   },
-  globalIgnores(['**/dist/**', '**/node_modules/**', '**/coverage/**']),
+  globalIgnores(['**/dist/**', '**/node_modules/**', '**/coverage/**', '**/target/**', 'crates/**/pkg/**']),
   pluginJs.configs.recommended,
   tsEslint.configs.recommended,
   ...pluginVue.configs['flat/essential'],

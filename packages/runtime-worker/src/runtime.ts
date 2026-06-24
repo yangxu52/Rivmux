@@ -1,6 +1,7 @@
 import { createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
+import { loadWasmTransmuxCoreHost } from './wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from './wasm/rivmux-transmux-wasm'
 
 import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
@@ -30,14 +31,14 @@ export type RuntimeMseController = {
 export type RuntimeWorkerDependencies = {
   createMseController?: () => RuntimeMseController
   createLoader?: (config: StreamLoaderConfig) => StreamLoader
-  createTransmuxCore?: () => TransmuxCoreHost | undefined
+  createTransmuxCore?: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
 }
 
 export class RuntimeWorker {
   private readonly port: RuntimeWorkerPort
   private readonly createMseController: () => RuntimeMseController
   private readonly createLoader: (config: StreamLoaderConfig) => StreamLoader
-  private readonly createTransmuxCore: () => TransmuxCoreHost | undefined
+  private readonly createTransmuxCore: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
   private state: RuntimeState = 'idle'
   private url?: string
   private options?: NormalizedRivmuxPlayerOptions
@@ -51,7 +52,7 @@ export class RuntimeWorker {
     this.port = port
     this.createMseController = dependencies.createMseController ?? (() => new MseController())
     this.createLoader = dependencies.createLoader ?? ((config) => new HttpFlvLoader(config))
-    this.createTransmuxCore = dependencies.createTransmuxCore ?? (() => undefined)
+    this.createTransmuxCore = dependencies.createTransmuxCore ?? ((options) => loadWasmTransmuxCoreHost(options.runtime.wasmUrl))
   }
 
   async handleCommand(command: WorkerCommand): Promise<void> {
@@ -104,7 +105,8 @@ export class RuntimeWorker {
   }
 
   private async start(): Promise<void> {
-    if (this.mse === undefined || this.state === 'idle' || this.state === 'ready') {
+    const options = this.options
+    if (this.mse === undefined || options === undefined || this.state === 'idle' || this.state === 'ready') {
       this.fail('runtime', 'RIVMUX_WORKER_START_REQUIRES_ATTACH', 'Worker start requires an attached MediaSource.', true)
       return
     }
@@ -114,7 +116,7 @@ export class RuntimeWorker {
     }
 
     const fixture = createM1StaticFmp4Fixture()
-    const transmuxCore = this.createTransmuxCore()
+    const transmuxCore = await this.createTransmuxCore(options)
     const hasTransmuxCore = transmuxCore !== undefined
     if (transmuxCore !== undefined) {
       this.transmuxCore?.destroy()

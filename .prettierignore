@@ -15,6 +15,7 @@ design/*.md
 
 # Rust and Cargo
 target
+crates/**/pkg
 **/*.rs
 **/*.toml
 **/*.lock
