@@ -38,11 +38,28 @@ export type CoreWarning = {
   message: string
 }
 
+export type CoreTrackKind = 'video' | 'audio'
+
+export type CoreInitSegment = {
+  track: CoreTrackKind
+  codec: string
+  timescale: number
+  bytes: Uint8Array
+}
+
+export type CoreMediaSegment = {
+  track: CoreTrackKind
+  dtsStartMs: number
+  dtsEndMs: number
+  keyframe: boolean
+  bytes: Uint8Array
+}
+
 export type CoreEvent =
   | { type: 'probeResult'; data: CoreProbeResult }
   | { type: 'mediaInfo'; data: CoreMediaInfo }
-  | { type: 'initSegment'; data: unknown }
-  | { type: 'mediaSegment'; data: unknown }
+  | { type: 'initSegment'; data: CoreInitSegment }
+  | { type: 'mediaSegment'; data: CoreMediaSegment }
   | { type: 'videoConfig'; data: unknown }
   | { type: 'audioConfig'; data: unknown }
   | { type: 'videoSample'; data: unknown }
@@ -150,12 +167,14 @@ function normalizeCoreEvent(value: unknown): CoreEvent {
       return { type: 'probeResult', data: normalizeProbeResult(data) }
     case 'mediaInfo':
       return { type: 'mediaInfo', data: normalizeMediaInfo(data) }
+    case 'initSegment':
+      return { type: 'initSegment', data: normalizeInitSegment(data) }
+    case 'mediaSegment':
+      return { type: 'mediaSegment', data: normalizeMediaSegment(data) }
     case 'videoConfig':
     case 'audioConfig':
     case 'videoSample':
     case 'audioSample':
-    case 'initSegment':
-    case 'mediaSegment':
     case 'metadata':
     case 'discontinuity':
       return { type: value.type, data }
@@ -166,6 +185,33 @@ function normalizeCoreEvent(value: unknown): CoreEvent {
     default:
       throw new TypeError(`Unsupported transmux core event type: ${value.type}.`)
   }
+}
+
+function normalizeInitSegment(value: unknown): CoreInitSegment {
+  if (!isRecord(value)) {
+    throw new TypeError('Transmux core initSegment event payload must be an object.')
+  }
+
+  const track = normalizeTrackKind(value.track)
+  const codec = normalizeRequiredPrimitive(value.codec, 'string', 'initSegment codec')
+  const timescale = normalizeRequiredPrimitive(value.timescale, 'number', 'initSegment timescale')
+  const bytes = normalizeBytes(value.bytes, 'initSegment bytes')
+
+  return { track, codec, timescale, bytes }
+}
+
+function normalizeMediaSegment(value: unknown): CoreMediaSegment {
+  if (!isRecord(value)) {
+    throw new TypeError('Transmux core mediaSegment event payload must be an object.')
+  }
+
+  const track = normalizeTrackKind(value.track)
+  const dtsStartMs = normalizeRequiredPrimitive(value.dtsStartMs, 'number', 'mediaSegment dtsStartMs')
+  const dtsEndMs = normalizeRequiredPrimitive(value.dtsEndMs, 'number', 'mediaSegment dtsEndMs')
+  const keyframe = normalizeRequiredPrimitive(value.keyframe, 'boolean', 'mediaSegment keyframe')
+  const bytes = normalizeBytes(value.bytes, 'mediaSegment bytes')
+
+  return { track, dtsStartMs, dtsEndMs, keyframe, bytes }
 }
 
 function normalizeProbeResult(value: unknown): CoreProbeResult {
@@ -308,6 +354,38 @@ function normalizeOptionalPrimitive<T extends 'string' | 'number'>(value: unknow
   }
 
   throw new TypeError(`Expected optional ${expectedType}, received ${typeof value}.`)
+}
+
+function normalizeRequiredPrimitive<T extends 'string' | 'number' | 'boolean'>(
+  value: unknown,
+  expectedType: T,
+  field: string
+): T extends 'string' ? string : T extends 'number' ? number : boolean {
+  if (typeof value !== expectedType) {
+    throw new TypeError(`Expected ${field} to be ${expectedType}, received ${typeof value}.`)
+  }
+
+  return value as T extends 'string' ? string : T extends 'number' ? number : boolean
+}
+
+function normalizeTrackKind(value: unknown): CoreTrackKind {
+  if (value === 'video' || value === 'audio') {
+    return value
+  }
+
+  throw new TypeError(`Unsupported transmux core track kind: ${String(value)}.`)
+}
+
+function normalizeBytes(value: unknown, field: string): Uint8Array {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+
+  if (Array.isArray(value) && value.every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255)) {
+    return new Uint8Array(value)
+  }
+
+  throw new TypeError(`Expected ${field} to be Uint8Array-compatible bytes.`)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

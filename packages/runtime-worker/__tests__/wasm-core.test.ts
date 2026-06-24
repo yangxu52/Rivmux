@@ -23,7 +23,7 @@ describe('runtime transmux core host', () => {
           track: 'video',
           codec: 'avc1.42E01E',
           timescale: 1000,
-          bytes: [1, 2, 3],
+          bytes: new Uint8Array([1, 2, 3]),
         },
       },
       {
@@ -54,7 +54,7 @@ describe('runtime transmux core host', () => {
           track: 'video',
           codec: 'avc1.42E01E',
           timescale: 1000,
-          bytes: [1, 2, 3],
+          bytes: new Uint8Array([1, 2, 3]),
         },
       },
       {

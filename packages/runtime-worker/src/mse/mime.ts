@@ -1,5 +1,9 @@
 export const M1_VIDEO_MIME = 'video/mp4; codecs="avc1.42C01E"'
 
+export function createMp4VideoMime(codec: string): string {
+  return `video/mp4; codecs="${codec}"`
+}
+
 export function isMseSupported(mimeType: string): boolean {
   return typeof MediaSource !== 'undefined' && typeof MediaSource.isTypeSupported === 'function' && MediaSource.isTypeSupported(mimeType)
 }

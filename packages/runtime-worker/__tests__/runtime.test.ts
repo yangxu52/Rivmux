@@ -52,42 +52,41 @@ describe('RuntimeWorker', () => {
 
     expect(loader.opened).toBe(true)
     expect(loader.closed).toBe(true)
-    expect(statsMessages).toEqual([
-      {
-        type: 'stats',
-        stats: expect.objectContaining({
-          bytesReceived: 0,
-          currentNetworkSpeed: 0,
-          outputBytes: 28904,
-          appendQueueLength: 0,
-          bufferedDuration: 1,
-        }),
-      },
-      {
-        type: 'stats',
-        stats: expect.objectContaining({
-          bytesReceived: 2,
-          currentNetworkSpeed: 2,
-          outputBytes: 28904,
-        }),
-      },
-      {
-        type: 'stats',
-        stats: expect.objectContaining({
-          bytesReceived: 3,
-          currentNetworkSpeed: 1,
-          outputBytes: 28904,
-        }),
-      },
-    ])
+    expect(statsMessages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        bytesReceived: 0,
+        currentNetworkSpeed: 0,
+        outputBytes: 28904,
+        appendQueueLength: 0,
+        bufferedDuration: 1,
+      }),
+    })
+    expect(statsMessages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        bytesReceived: 2,
+        currentNetworkSpeed: 2,
+        outputBytes: 28904,
+      }),
+    })
+    expect(statsMessages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        bytesReceived: 3,
+        currentNetworkSpeed: 1,
+        outputBytes: 28904,
+      }),
+    })
   })
 
   it('feeds loader chunks into the transmux core and forwards media info', async () => {
     const port = new MockPort()
     const loader = new MockLoader([new Uint8Array([1, 2])])
+    const mse = new MockMseController()
     const transmuxCore = new MockTransmuxCore([[{ type: 'mediaInfo', data: { container: 'flv', video: 'avc', videoCodec: 'avc1.42E01E' } }]])
     const runtime = new RuntimeWorker(port, {
-      createMseController: () => new MockMseController(),
+      createMseController: () => mse,
       createLoader: () => loader,
       createTransmuxCore: () => transmuxCore,
     })
@@ -98,12 +97,47 @@ describe('RuntimeWorker', () => {
     await loader.waitForDone()
 
     expect(transmuxCore.chunks).toStrictEqual([new Uint8Array([1, 2])])
+    expect(mse.appendedFixtureCount).toBe(0)
     expect(port.messages).toContainEqual({
       type: 'media-info',
       mediaInfo: {
         container: 'flv',
         videoCodec: 'avc1.42E01E',
       },
+    })
+  })
+
+  it('appends transmux core init and media segments through MSE', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1, 2])])
+    const mse = new MockMseController()
+    const initBytes = new Uint8Array([1, 2, 3])
+    const mediaBytes = new Uint8Array([4, 5])
+    const transmuxCore = new MockTransmuxCore([
+      [
+        { type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes } },
+        { type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: mediaBytes } },
+      ],
+    ])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(mse.appendedFixtureCount).toBe(0)
+    expect(mse.initSegments).toStrictEqual([{ track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes }])
+    expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: mediaBytes }])
+    expect(port.messages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        outputBytes: 5,
+      }),
     })
   })
 
@@ -191,12 +225,26 @@ class MockMseController implements RuntimeMseController {
   readonly bufferedStart = 0
   readonly bufferedEnd = 1
   readonly bufferedDuration = 1
+  readonly initSegments: Array<Extract<CoreEvent, { type: 'initSegment' }>['data']> = []
+  readonly mediaSegments: Array<Extract<CoreEvent, { type: 'mediaSegment' }>['data']> = []
+  appendedFixtureCount = 0
 
   createMediaSourceHandle(): Promise<MediaSourceHandle> {
     return Promise.resolve({} as MediaSourceHandle)
   }
 
   appendFixture(): Promise<void> {
+    this.appendedFixtureCount += 1
+    return Promise.resolve()
+  }
+
+  appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void> {
+    this.initSegments.push(segment)
+    return Promise.resolve()
+  }
+
+  appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void> {
+    this.mediaSegments.push(segment)
     return Promise.resolve()
   }
 

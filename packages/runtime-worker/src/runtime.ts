@@ -22,6 +22,8 @@ export type RuntimeMseController = {
   readonly bufferedDuration: number | undefined
   createMediaSourceHandle(): Promise<MediaSourceHandle>
   appendFixture(fixture: ReturnType<typeof createM1StaticFmp4Fixture>): Promise<void>
+  appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
+  appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void>
   destroy(): void
 }
 
@@ -112,18 +114,27 @@ export class RuntimeWorker {
     }
 
     const fixture = createM1StaticFmp4Fixture()
-    await this.mse.appendFixture(fixture)
+    const transmuxCore = this.createTransmuxCore()
+    const hasTransmuxCore = transmuxCore !== undefined
+    if (transmuxCore !== undefined) {
+      this.transmuxCore?.destroy()
+      this.transmuxCore = transmuxCore
+    } else {
+      await this.mse.appendFixture(fixture)
+    }
     this.state = 'started'
-    this.outputBytes = fixture.initSegment.byteLength + fixture.mediaSegment.byteLength
-    this.post({
-      type: 'media-info',
-      mediaInfo: {
-        container: 'fmp4',
-        videoCodec: fixture.codec,
-        width: fixture.width,
-        height: fixture.height,
-      },
-    })
+    this.outputBytes = hasTransmuxCore ? 0 : fixture.initSegment.byteLength + fixture.mediaSegment.byteLength
+    if (!hasTransmuxCore) {
+      this.post({
+        type: 'media-info',
+        mediaInfo: {
+          container: 'fmp4',
+          videoCodec: fixture.codec,
+          width: fixture.width,
+          height: fixture.height,
+        },
+      })
+    }
     this.postStats()
     this.startLoader()
   }
@@ -157,8 +168,6 @@ export class RuntimeWorker {
       url,
       network: options.network,
     })
-    this.transmuxCore?.destroy()
-    this.transmuxCore = this.createTransmuxCore()
     const runId = this.loaderRunId + 1
     this.loaderRunId = runId
     this.loader = loader
@@ -177,10 +186,11 @@ export class RuntimeWorker {
         }
 
         this.postStats(loader.stats)
-        if (!this.processTransmuxEvents(this.transmuxCore?.pushChunk(chunk.bytes) ?? [])) {
+        if (!(await this.processTransmuxEvents(this.transmuxCore?.pushChunk(chunk.bytes) ?? []))) {
           await this.closeCurrentLoader(loader, runId)
           return
         }
+        this.postStats(loader.stats)
       }
     } catch (cause) {
       if (!this.isCurrentLoader(loader, runId) || isAbortLikeError(cause)) {
@@ -242,7 +252,7 @@ export class RuntimeWorker {
     })
   }
 
-  private processTransmuxEvents(events: CoreEvent[]): boolean {
+  private async processTransmuxEvents(events: CoreEvent[]): Promise<boolean> {
     for (const event of events) {
       switch (event.type) {
         case 'mediaInfo':
@@ -255,9 +265,15 @@ export class RuntimeWorker {
           this.post({ type: 'error', error: coreErrorToPlayerError(event.data) })
           this.state = 'fatal-error'
           return false
-        case 'probeResult':
         case 'initSegment':
+          await this.mse?.appendInitSegment(event.data)
+          this.outputBytes += event.data.bytes.byteLength
+          break
         case 'mediaSegment':
+          await this.mse?.appendMediaSegment(event.data)
+          this.outputBytes += event.data.bytes.byteLength
+          break
+        case 'probeResult':
         case 'videoConfig':
         case 'audioConfig':
         case 'videoSample':
