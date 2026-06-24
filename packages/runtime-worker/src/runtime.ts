@@ -256,6 +256,8 @@ export class RuntimeWorker {
           this.state = 'fatal-error'
           return false
         case 'probeResult':
+        case 'initSegment':
+        case 'mediaSegment':
         case 'videoConfig':
         case 'audioConfig':
         case 'videoSample':

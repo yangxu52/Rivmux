@@ -6,6 +6,7 @@ pub mod demux;
 pub mod error;
 pub mod event;
 pub mod metadata;
+pub mod mux;
 pub mod probe;
 pub mod sample;
 #[cfg(feature = "wasm")]

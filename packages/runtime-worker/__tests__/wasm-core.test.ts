@@ -18,6 +18,15 @@ describe('runtime transmux core host', () => {
         },
       },
       {
+        type: 'initSegment',
+        data: {
+          track: 'video',
+          codec: 'avc1.42E01E',
+          timescale: 1000,
+          bytes: [1, 2, 3],
+        },
+      },
+      {
         type: 'fatalError',
         data: {
           code: 'unsupportedVideoCodec',
@@ -37,6 +46,15 @@ describe('runtime transmux core host', () => {
           audioCodec: 'mp4a.40.2',
           audioSampleRate: 44_100,
           audioChannelCount: 2,
+        },
+      },
+      {
+        type: 'initSegment',
+        data: {
+          track: 'video',
+          codec: 'avc1.42E01E',
+          timescale: 1000,
+          bytes: [1, 2, 3],
         },
       },
       {

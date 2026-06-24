@@ -41,6 +41,8 @@ export type CoreWarning = {
 export type CoreEvent =
   | { type: 'probeResult'; data: CoreProbeResult }
   | { type: 'mediaInfo'; data: CoreMediaInfo }
+  | { type: 'initSegment'; data: unknown }
+  | { type: 'mediaSegment'; data: unknown }
   | { type: 'videoConfig'; data: unknown }
   | { type: 'audioConfig'; data: unknown }
   | { type: 'videoSample'; data: unknown }
@@ -152,6 +154,8 @@ function normalizeCoreEvent(value: unknown): CoreEvent {
     case 'audioConfig':
     case 'videoSample':
     case 'audioSample':
+    case 'initSegment':
+    case 'mediaSegment':
     case 'metadata':
     case 'discontinuity':
       return { type: value.type, data }

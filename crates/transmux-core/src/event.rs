@@ -14,6 +14,8 @@ use crate::sample::{AudioSample, VideoSample};
 pub enum CoreEvent {
     ProbeResult(ProbeResult),
     MediaInfo(MediaInfo),
+    InitSegment(InitSegment),
+    MediaSegment(MediaSegment),
     VideoConfig(VideoConfig),
     AudioConfig(AudioConfig),
     VideoSample(VideoSample),
@@ -22,6 +24,35 @@ pub enum CoreEvent {
     Warning(CoreWarning),
     FatalError(CoreError),
     Discontinuity(Discontinuity),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum TrackKind {
+    Video,
+    Audio,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct InitSegment {
+    pub track: TrackKind,
+    pub codec: String,
+    pub timescale: u32,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct MediaSegment {
+    pub track: TrackKind,
+    pub dts_start_ms: i64,
+    pub dts_end_ms: i64,
+    pub keyframe: bool,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
