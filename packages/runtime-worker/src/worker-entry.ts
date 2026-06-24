@@ -8,7 +8,10 @@ export { HttpFlvLoader, HttpFlvLoaderError } from './loader/http-flv-loader'
 export { MseController } from './mse/mse-controller'
 export { SourceBufferQueue } from './mse/source-buffer-queue'
 export { isMseSupported } from './mse/mime'
+export { WasmTransmuxCoreHost, normalizeCoreEvents } from './wasm/rivmux-transmux-wasm'
+export { createWasmTransmuxCoreHost } from './wasm/wasm-loader'
 export type { StreamChunk, StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
+export type { CoreEvent, TransmuxCoreHost, TransmuxCoreWasmConstructor } from './wasm/rivmux-transmux-wasm'
 
 type DedicatedWorkerScopeLike = {
   addEventListener(type: 'message', listener: (event: MessageEvent<WorkerCommand>) => void): void

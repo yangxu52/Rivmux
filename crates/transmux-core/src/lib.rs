@@ -8,6 +8,8 @@ pub mod event;
 pub mod metadata;
 pub mod probe;
 pub mod sample;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 pub use crate::core::{CoreConfig, TransmuxCore};
 pub use crate::error::{CoreError, CoreErrorCode};

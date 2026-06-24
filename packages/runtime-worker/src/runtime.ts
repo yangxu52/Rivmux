@@ -1,9 +1,11 @@
 import { createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
+import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from './wasm/rivmux-transmux-wasm'
 
 import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
 import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerCommand, WorkerMessage } from 'rivmux-protocol'
+import type { CoreEvent, TransmuxCoreHost } from './wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
 
@@ -26,17 +28,20 @@ export type RuntimeMseController = {
 export type RuntimeWorkerDependencies = {
   createMseController?: () => RuntimeMseController
   createLoader?: (config: StreamLoaderConfig) => StreamLoader
+  createTransmuxCore?: () => TransmuxCoreHost | undefined
 }
 
 export class RuntimeWorker {
   private readonly port: RuntimeWorkerPort
   private readonly createMseController: () => RuntimeMseController
   private readonly createLoader: (config: StreamLoaderConfig) => StreamLoader
+  private readonly createTransmuxCore: () => TransmuxCoreHost | undefined
   private state: RuntimeState = 'idle'
   private url?: string
   private options?: NormalizedRivmuxPlayerOptions
   private mse?: RuntimeMseController
   private loader?: StreamLoader
+  private transmuxCore?: TransmuxCoreHost
   private loaderRunId = 0
   private outputBytes = 0
 
@@ -44,6 +49,7 @@ export class RuntimeWorker {
     this.port = port
     this.createMseController = dependencies.createMseController ?? (() => new MseController())
     this.createLoader = dependencies.createLoader ?? ((config) => new HttpFlvLoader(config))
+    this.createTransmuxCore = dependencies.createTransmuxCore ?? (() => undefined)
   }
 
   async handleCommand(command: WorkerCommand): Promise<void> {
@@ -151,6 +157,8 @@ export class RuntimeWorker {
       url,
       network: options.network,
     })
+    this.transmuxCore?.destroy()
+    this.transmuxCore = this.createTransmuxCore()
     const runId = this.loaderRunId + 1
     this.loaderRunId = runId
     this.loader = loader
@@ -169,6 +177,10 @@ export class RuntimeWorker {
         }
 
         this.postStats(loader.stats)
+        if (!this.processTransmuxEvents(this.transmuxCore?.pushChunk(chunk.bytes) ?? [])) {
+          await this.closeCurrentLoader(loader, runId)
+          return
+        }
       }
     } catch (cause) {
       if (!this.isCurrentLoader(loader, runId) || isAbortLikeError(cause)) {
@@ -193,16 +205,20 @@ export class RuntimeWorker {
 
     this.loader = undefined
     this.loaderRunId += 1
+    this.transmuxCore?.destroy()
+    this.transmuxCore = undefined
     await loader.close()
   }
 
   private async closeCurrentLoader(loader: StreamLoader, runId: number): Promise<void> {
-    if (!this.isCurrentLoader(loader, runId)) {
+    if (this.loader !== loader || this.loaderRunId !== runId) {
       return
     }
 
     this.loader = undefined
     this.loaderRunId += 1
+    this.transmuxCore?.destroy()
+    this.transmuxCore = undefined
     await loader.close()
   }
 
@@ -224,6 +240,33 @@ export class RuntimeWorker {
         bufferedDuration: this.mse?.bufferedDuration,
       },
     })
+  }
+
+  private processTransmuxEvents(events: CoreEvent[]): boolean {
+    for (const event of events) {
+      switch (event.type) {
+        case 'mediaInfo':
+          this.post({ type: 'media-info', mediaInfo: coreMediaInfoToPlayerMediaInfo(event.data) })
+          break
+        case 'warning':
+          this.post({ type: 'warning', warning: coreWarningToPlayerWarning(event.data) })
+          break
+        case 'fatalError':
+          this.post({ type: 'error', error: coreErrorToPlayerError(event.data) })
+          this.state = 'fatal-error'
+          return false
+        case 'probeResult':
+        case 'videoConfig':
+        case 'audioConfig':
+        case 'videoSample':
+        case 'audioSample':
+        case 'metadata':
+        case 'discontinuity':
+          break
+      }
+    }
+
+    return true
   }
 
   private fail(kind: PlayerError['kind'], code: string, message: string, terminal: boolean, cause?: unknown): void {

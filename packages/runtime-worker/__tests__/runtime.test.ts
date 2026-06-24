@@ -5,6 +5,7 @@ import { RuntimeWorker } from '../src/runtime'
 import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from 'rivmux-protocol'
 import type { StreamChunk, StreamLoader, StreamLoaderStats } from '../src/loader/loader'
 import type { RuntimeMseController } from '../src/runtime'
+import type { CoreEvent, TransmuxCoreHost } from '../src/wasm/rivmux-transmux-wasm'
 
 describe('RuntimeWorker', () => {
   it('emits ready after init', async () => {
@@ -79,6 +80,58 @@ describe('RuntimeWorker', () => {
         }),
       },
     ])
+  })
+
+  it('feeds loader chunks into the transmux core and forwards media info', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1, 2])])
+    const transmuxCore = new MockTransmuxCore([[{ type: 'mediaInfo', data: { container: 'flv', video: 'avc', videoCodec: 'avc1.42E01E' } }]])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(transmuxCore.chunks).toStrictEqual([new Uint8Array([1, 2])])
+    expect(port.messages).toContainEqual({
+      type: 'media-info',
+      mediaInfo: {
+        container: 'flv',
+        videoCodec: 'avc1.42E01E',
+      },
+    })
+  })
+
+  it('closes the loader when the transmux core emits a fatal error', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const transmuxCore = new MockTransmuxCore([[{ type: 'fatalError', data: { code: 'unsupportedVideoCodec', message: 'Unsupported video codec.' } }]])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(loader.closed).toBe(true)
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: {
+        kind: 'unsupported',
+        code: 'RIVMUX_CORE_UNSUPPORTED_VIDEO_CODEC',
+        message: 'Unsupported video codec.',
+        terminal: true,
+      },
+    })
   })
 
   it('closes the loader before reporting stopped', async () => {
@@ -227,6 +280,28 @@ class BlockingLoader implements StreamLoader {
   waitForOpen(): Promise<void> {
     return this.opened
   }
+}
+
+class MockTransmuxCore implements TransmuxCoreHost {
+  readonly chunks: Uint8Array[] = []
+  private offset = 0
+
+  constructor(private readonly eventBatches: CoreEvent[][]) {}
+
+  pushChunk(chunk: Uint8Array): CoreEvent[] {
+    this.chunks.push(chunk)
+    const events = this.eventBatches[this.offset] ?? []
+    this.offset += 1
+    return events
+  }
+
+  flush(): CoreEvent[] {
+    return []
+  }
+
+  reset(): void {}
+
+  destroy(): void {}
 }
 
 function createOptions(): NormalizedRivmuxPlayerOptions {

@@ -8,5 +8,14 @@ readme = "README.md"
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+wasm = ["serde", "dep:serde-wasm-bindgen", "dep:wasm-bindgen"]

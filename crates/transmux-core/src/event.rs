@@ -6,6 +6,11 @@ use crate::probe::{AudioCodecKind, ContainerKind, ProbeResult, VideoCodecKind};
 use crate::sample::{AudioSample, VideoSample};
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(tag = "type", content = "data", rename_all = "camelCase")
+)]
 pub enum CoreEvent {
     ProbeResult(ProbeResult),
     MediaInfo(MediaInfo),
@@ -20,6 +25,8 @@ pub enum CoreEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct MediaInfo {
     pub container: ContainerKind,
     pub video: Option<VideoCodecKind>,
@@ -50,6 +57,8 @@ impl MediaInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct CoreWarning {
     pub code: String,
     pub message: String,
@@ -66,6 +75,8 @@ impl CoreWarning {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Discontinuity {
     pub reason: String,
 }

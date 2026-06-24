@@ -2,6 +2,8 @@ use crate::error::{CoreError, CoreErrorCode};
 use crate::probe::VideoCodecKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct VideoConfig {
     pub codec: VideoCodecKind,
     pub codec_string: String,

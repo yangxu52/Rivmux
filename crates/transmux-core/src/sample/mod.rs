@@ -1,6 +1,8 @@
 use crate::probe::{AudioCodecKind, VideoCodecKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SampleTiming {
     pub dts_ms: i64,
     pub pts_ms: i64,
@@ -8,6 +10,8 @@ pub struct SampleTiming {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct VideoSample {
     pub codec: VideoCodecKind,
     pub timing: SampleTiming,
@@ -16,6 +20,8 @@ pub struct VideoSample {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct AudioSample {
     pub codec: AudioCodecKind,
     pub timing: SampleTiming,
