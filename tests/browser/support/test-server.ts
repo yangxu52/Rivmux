@@ -1,9 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { createM1StaticFmp4Fixture } from '../../../packages/runtime-worker/src/fixtures/m1-static-fmp4'
 
-import type { ServerResponse } from 'node:http'
 import type { Plugin } from 'vitest/config'
 
 type StreamState = {
@@ -16,7 +12,6 @@ type StreamState = {
 
 export function createBrowserTestServer(): Plugin {
   const streamStates = new Map<string, StreamState>()
-  const wasmPackageDir = join(process.cwd(), 'target/tmp/rivmux-transmux-core-wasm-pkg')
 
   return {
     name: 'rivmux-browser-test-server',
@@ -37,33 +32,6 @@ export function createBrowserTestServer(): Plugin {
             'content-type': 'application/json; charset=utf-8',
           })
           response.end(JSON.stringify(Object.fromEntries(streamStates)))
-          return
-        }
-
-        if (url.pathname === '/__rivmux-test/wasm/status') {
-          const wasmUrl = '/__rivmux-test/wasm/rivmux_transmux_core_bg.wasm'
-          const gluePath = join(wasmPackageDir, 'rivmux_transmux_core.js')
-          const wasmPath = join(wasmPackageDir, 'rivmux_transmux_core_bg.wasm')
-          response.writeHead(200, {
-            'cache-control': 'no-store',
-            'content-type': 'application/json; charset=utf-8',
-          })
-          response.end(
-            JSON.stringify({
-              available: existsSync(gluePath) && existsSync(wasmPath),
-              wasmUrl,
-            })
-          )
-          return
-        }
-
-        if (url.pathname === '/__rivmux-test/wasm/rivmux_transmux_core.js') {
-          serveFile(response, join(wasmPackageDir, 'rivmux_transmux_core.js'), 'application/javascript; charset=utf-8')
-          return
-        }
-
-        if (url.pathname === '/__rivmux-test/wasm/rivmux_transmux_core_bg.wasm') {
-          serveFile(response, join(wasmPackageDir, 'rivmux_transmux_core_bg.wasm'), 'application/wasm')
           return
         }
 
@@ -125,23 +93,6 @@ function getStreamState(streamStates: Map<string, StreamState>, id: string): Str
   }
   streamStates.set(id, state)
   return state
-}
-
-function serveFile(response: ServerResponse, path: string, contentType: string): void {
-  if (!existsSync(path)) {
-    response.writeHead(404, {
-      'cache-control': 'no-store',
-      'content-type': 'text/plain; charset=utf-8',
-    })
-    response.end(`Missing test asset: ${path}`)
-    return
-  }
-
-  response.writeHead(200, {
-    'cache-control': 'no-store',
-    'content-type': contentType,
-  })
-  response.end(readFileSync(path))
 }
 
 let cachedCoreH264FlvFixture: Uint8Array | undefined

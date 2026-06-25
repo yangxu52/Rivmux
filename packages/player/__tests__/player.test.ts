@@ -28,6 +28,11 @@ describe('RivmuxPlayer', () => {
 
     const attachPromise = player.attach(video)
     expect(worker.commands[0]).toMatchObject({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv' })
+    expect(worker.commands[0]?.options).toMatchObject({
+      runtime: {
+        wasmUrl: expect.stringMatching(/rivmux_transmux_core_bg\.wasm$/u),
+      },
+    })
     expect(worker.commands[1]).toStrictEqual({ type: 'attach-media-source' })
 
     worker.emit({ type: 'ready' })

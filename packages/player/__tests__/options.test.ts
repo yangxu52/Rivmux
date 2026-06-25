@@ -19,6 +19,25 @@ describe('normalizePlayerOptions', () => {
     expect(options.latency.startupBuffer).toBe(0.35)
     expect(options.network.headers).toStrictEqual({ Authorization: 'Bearer test' })
     expect(options.network.retry).toStrictEqual({ maxAttempts: 5, backoffMs: 500 })
+    expect(options.runtime).toMatchObject({
+      preferWorkerMse: true,
+      wasmUrl: expect.stringMatching(/rivmux_transmux_core_bg\.wasm$/u),
+    })
     expect(options.diagnostics).toStrictEqual({ statsIntervalMs: 1000, debug: true })
+  })
+
+  it('keeps explicit runtime asset overrides', () => {
+    const options = normalizePlayerOptions({
+      runtime: {
+        workerUrl: '/assets/rivmux-runtime-worker.js',
+        wasmUrl: '/assets/custom-core.wasm',
+      },
+    })
+
+    expect(options.runtime).toStrictEqual({
+      preferWorkerMse: true,
+      workerUrl: '/assets/rivmux-runtime-worker.js',
+      wasmUrl: '/assets/custom-core.wasm',
+    })
   })
 })

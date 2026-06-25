@@ -18,7 +18,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node ../../scripts/build-player-wasm-assets.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "clean": "rimraf dist node_modules/.tmp"
