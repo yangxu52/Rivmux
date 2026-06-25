@@ -107,16 +107,20 @@ describe('RuntimeWorker', () => {
     })
   })
 
-  it('appends transmux core init and media segments through MSE', async () => {
+  it('appends transmux core init and media segments for each track through MSE', async () => {
     const port = new MockPort()
     const loader = new MockLoader([new Uint8Array([1, 2])])
     const mse = new MockMseController()
     const initBytes = new Uint8Array([1, 2, 3])
     const mediaBytes = new Uint8Array([4, 5])
+    const audioInitBytes = new Uint8Array([6, 7])
+    const audioMediaBytes = new Uint8Array([8, 9, 10])
     const transmuxCore = new MockTransmuxCore([
       [
         { type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes } },
         { type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: mediaBytes } },
+        { type: 'initSegment', data: { track: 'audio', codec: 'mp4a.40.2', timescale: 44_100, bytes: audioInitBytes } },
+        { type: 'mediaSegment', data: { track: 'audio', dtsStartMs: 0, dtsEndMs: 23, keyframe: true, bytes: audioMediaBytes } },
       ],
     ])
     const runtime = new RuntimeWorker(port, {
@@ -131,12 +135,18 @@ describe('RuntimeWorker', () => {
     await loader.waitForDone()
 
     expect(mse.appendedFixtureCount).toBe(0)
-    expect(mse.initSegments).toStrictEqual([{ track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes }])
-    expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: mediaBytes }])
+    expect(mse.initSegments).toStrictEqual([
+      { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes },
+      { track: 'audio', codec: 'mp4a.40.2', timescale: 44_100, bytes: audioInitBytes },
+    ])
+    expect(mse.mediaSegments).toStrictEqual([
+      { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: mediaBytes },
+      { track: 'audio', dtsStartMs: 0, dtsEndMs: 23, keyframe: true, bytes: audioMediaBytes },
+    ])
     expect(port.messages).toContainEqual({
       type: 'stats',
       stats: expect.objectContaining({
-        outputBytes: 5,
+        outputBytes: 10,
       }),
     })
   })

@@ -52,8 +52,14 @@ export function createBrowserTestServer(): Plugin {
           'content-type': 'video/x-flv',
         })
 
-        const isCoreFixture = url.searchParams.get('fixture') === 'h264'
-        const chunk = isCoreFixture ? createCoreH264FlvFixture() : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
+        const fixture = url.searchParams.get('fixture')
+        const isCoreFixture = fixture === 'h264' || fixture === 'h264-aac'
+        const chunk =
+          fixture === 'h264'
+            ? createCoreH264FlvFixture()
+            : fixture === 'h264-aac'
+              ? createCoreH264AacFlvFixture()
+              : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
         const writeChunk = (): void => {
           if (response.writableEnded) {
             return
@@ -96,10 +102,16 @@ function getStreamState(streamStates: Map<string, StreamState>, id: string): Str
 }
 
 let cachedCoreH264FlvFixture: Uint8Array | undefined
+let cachedCoreH264AacFlvFixture: Uint8Array | undefined
 
 function createCoreH264FlvFixture(): Uint8Array {
   cachedCoreH264FlvFixture ??= buildCoreH264FlvFixture()
   return cachedCoreH264FlvFixture
+}
+
+function createCoreH264AacFlvFixture(): Uint8Array {
+  cachedCoreH264AacFlvFixture ??= buildCoreH264AacFlvFixture()
+  return cachedCoreH264AacFlvFixture
 }
 
 function buildCoreH264FlvFixture(): Uint8Array {
@@ -109,7 +121,27 @@ function buildCoreH264FlvFixture(): Uint8Array {
   const avcc = findBoxPayload(initSegment, 'avcC')
   const idrSample = findFirstVideoSample(mediaSegment)
 
-  return concatBytes([new Uint8Array([0x46, 0x4c, 0x56, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0]), videoSequenceHeaderTag(avcc), videoSampleTag(0, true, 0, idrSample)])
+  return concatBytes([flvHeader(false), videoSequenceHeaderTag(avcc), videoSampleTag(0, true, 0, idrSample)])
+}
+
+function buildCoreH264AacFlvFixture(): Uint8Array {
+  const fixture = createM1StaticFmp4Fixture()
+  const initSegment = new Uint8Array(fixture.initSegment)
+  const mediaSegment = new Uint8Array(fixture.mediaSegment)
+  const avcc = findBoxPayload(initSegment, 'avcC')
+  const idrSample = findFirstVideoSample(mediaSegment)
+
+  return concatBytes([
+    flvHeader(true),
+    videoSequenceHeaderTag(avcc),
+    audioSequenceHeaderTag(new Uint8Array([0x12, 0x10])),
+    videoSampleTag(0, true, 0, idrSample),
+    audioSampleTag(0, new Uint8Array([0x21, 0x22, 0x23, 0x24])),
+  ])
+}
+
+function flvHeader(hasAudio: boolean): Uint8Array {
+  return new Uint8Array([0x46, 0x4c, 0x56, 1, hasAudio ? 5 : 1, 0, 0, 0, 9, 0, 0, 0, 0])
 }
 
 function videoSequenceHeaderTag(avcc: Uint8Array): Uint8Array {
@@ -118,6 +150,14 @@ function videoSequenceHeaderTag(avcc: Uint8Array): Uint8Array {
 
 function videoSampleTag(timestampMs: number, isKeyframe: boolean, compositionTimeMs: number, sample: Uint8Array): Uint8Array {
   return rawFlvTag(9, timestampMs, concatBytes([new Uint8Array([isKeyframe ? 0x17 : 0x27, 1, ...i24(compositionTimeMs)]), sample]))
+}
+
+function audioSequenceHeaderTag(audioSpecificConfig: Uint8Array): Uint8Array {
+  return rawFlvTag(8, 0, concatBytes([new Uint8Array([0xaf, 0]), audioSpecificConfig]))
+}
+
+function audioSampleTag(timestampMs: number, sample: Uint8Array): Uint8Array {
+  return rawFlvTag(8, timestampMs, concatBytes([new Uint8Array([0xaf, 1]), sample]))
 }
 
 function rawFlvTag(tagType: number, timestampMs: number, payload: Uint8Array): Uint8Array {

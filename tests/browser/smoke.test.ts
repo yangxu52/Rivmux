@@ -14,13 +14,13 @@ type TestStreamStats = Record<
 >
 
 describe('Rivmux browser runtime', () => {
-  it('loads the default packaged wasm transmux core and appends fMP4 segments from HTTP-FLV', async () => {
+  it('loads the default packaged wasm transmux core and appends H.264/AAC fMP4 segments from HTTP-FLV', async () => {
     await resetTestStreams()
 
     const video = createVideo()
     const player = createPlayer('m5-default-wasm', {
       autoPlay: false,
-      fixture: 'h264',
+      fixture: 'h264-aac',
     })
     const errors: unknown[] = []
     const mediaInfo: unknown[] = []
@@ -33,12 +33,17 @@ describe('Rivmux browser runtime', () => {
       await player.attach(video)
       await player.start()
 
-      await waitForCoreSignal(errors, () => mediaInfo.some((info) => isRecord(info) && info.container === 'flv' && info.videoCodec === 'avc1.42C01E'))
+      await waitForCoreSignal(errors, () =>
+        mediaInfo.some((info) => isRecord(info) && info.container === 'flv' && info.videoCodec === 'avc1.42C01E' && info.audioCodec === 'mp4a.40.2')
+      )
       await waitForCoreSignal(errors, () => stats.some((entry) => isRecord(entry) && typeof entry.outputBytes === 'number' && entry.outputBytes > 0))
       expect(errors).toStrictEqual([])
       expect(mediaInfo).toContainEqual({
         container: 'flv',
         videoCodec: 'avc1.42C01E',
+        audioCodec: 'mp4a.40.2',
+        audioSampleRate: 44_100,
+        audioChannelCount: 2,
       })
       expect(stats).toContainEqual(
         expect.objectContaining({

@@ -32,6 +32,7 @@ pub enum CoreEvent {
 pub enum TrackKind {
     Video,
     Audio,
+    Muxed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

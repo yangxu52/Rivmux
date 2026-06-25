@@ -1,4 +1,4 @@
-import { M1_VIDEO_MIME, assertMseSupport, createMp4VideoMime } from './mime'
+import { M1_VIDEO_MIME, assertMseSupport, createMp4AudioMime, createMp4VideoMime } from './mime'
 import { SourceBufferQueue } from './source-buffer-queue'
 
 import type { M1StaticFmp4Fixture } from '../fixtures/m1-static-fmp4'
@@ -6,27 +6,27 @@ import type { CoreInitSegment, CoreMediaSegment } from '../wasm/rivmux-transmux-
 
 export class MseController {
   private mediaSource?: MediaSource
-  private sourceBuffer?: SourceBuffer
-  private queue?: SourceBufferQueue
+  private readonly sourceBuffers = new Map<CoreInitSegment['track'], SourceBuffer>()
+  private readonly queues = new Map<CoreInitSegment['track'], SourceBufferQueue>()
 
   get appendQueueLength(): number {
-    return this.queue?.length ?? 0
+    return Array.from(this.queues.values()).reduce((total, queue) => total + queue.length, 0)
   }
 
   get sourceBufferUpdating(): boolean {
-    return this.queue?.updating ?? false
+    return Array.from(this.queues.values()).some((queue) => queue.updating)
   }
 
   get bufferedStart(): number | undefined {
-    return this.queue?.bufferedStart
+    return this.primaryQueue?.bufferedStart
   }
 
   get bufferedEnd(): number | undefined {
-    return this.queue?.bufferedEnd
+    return this.primaryQueue?.bufferedEnd
   }
 
   get bufferedDuration(): number | undefined {
-    return this.queue?.bufferedDuration
+    return this.primaryQueue?.bufferedDuration
   }
 
   async createMediaSourceHandle(): Promise<MediaSourceHandle> {
@@ -51,40 +51,29 @@ export class MseController {
 
     await waitForSourceOpen(mediaSource)
 
-    const sourceBuffer = this.sourceBuffer ?? mediaSource.addSourceBuffer(fixture.mimeType)
-    this.sourceBuffer = sourceBuffer
-    this.queue ??= new SourceBufferQueue(sourceBuffer)
-    await this.queue.append(fixture.initSegment)
-    await this.queue.append(fixture.mediaSegment)
+    const queue = this.ensureQueue('video', fixture.mimeType)
+    await queue.append(fixture.initSegment)
+    await queue.append(fixture.mediaSegment)
     mediaSource.duration = fixture.duration
   }
 
   async appendInitSegment(segment: CoreInitSegment): Promise<void> {
-    if (segment.track !== 'video') {
-      throw new Error(`Unsupported init segment track: ${segment.track}.`)
-    }
-
     const mediaSource = this.requireMediaSource()
-    const mimeType = createMp4VideoMime(segment.codec)
+    const mimeType = createMp4Mime(segment.track, segment.codec)
     assertMseSupport(mimeType)
     await waitForSourceOpen(mediaSource)
 
-    const sourceBuffer = this.sourceBuffer ?? mediaSource.addSourceBuffer(mimeType)
-    this.sourceBuffer = sourceBuffer
-    this.queue ??= new SourceBufferQueue(sourceBuffer)
-    await this.queue.append(toAppendBuffer(segment.bytes))
+    const queue = this.ensureQueue(segment.track, mimeType)
+    await queue.append(toAppendBuffer(segment.bytes))
   }
 
   async appendMediaSegment(segment: CoreMediaSegment): Promise<void> {
-    if (segment.track !== 'video') {
-      throw new Error(`Unsupported media segment track: ${segment.track}.`)
+    const queue = this.queues.get(segment.track) ?? this.queues.get('muxed')
+    if (queue === undefined) {
+      throw new Error(`Cannot append ${segment.track} media segment before init segment.`)
     }
 
-    if (this.queue === undefined) {
-      throw new Error('Cannot append media segment before init segment.')
-    }
-
-    await this.queue.append(toAppendBuffer(segment.bytes))
+    await queue.append(toAppendBuffer(segment.bytes))
     const mediaSource = this.requireMediaSource()
     const duration = segment.dtsEndMs / 1000
     if (Number.isFinite(duration) && duration > 0 && mediaSource.readyState === 'open') {
@@ -93,23 +82,33 @@ export class MseController {
   }
 
   reset(): void {
-    this.queue?.reset()
+    for (const queue of this.queues.values()) {
+      queue.reset()
+    }
   }
 
   destroy(): void {
-    this.queue?.destroy()
-    this.queue = undefined
+    for (const queue of this.queues.values()) {
+      queue.destroy()
+    }
+    this.queues.clear()
 
-    if (this.mediaSource !== undefined && this.sourceBuffer !== undefined) {
-      try {
-        this.mediaSource.removeSourceBuffer(this.sourceBuffer)
-      } catch {
-        // Browser cleanup can race sourceclose during worker termination.
+    if (this.mediaSource !== undefined) {
+      for (const sourceBuffer of this.sourceBuffers.values()) {
+        try {
+          this.mediaSource.removeSourceBuffer(sourceBuffer)
+        } catch {
+          // Browser cleanup can race sourceclose during worker termination.
+        }
       }
     }
 
-    this.sourceBuffer = undefined
+    this.sourceBuffers.clear()
     this.mediaSource = undefined
+  }
+
+  private get primaryQueue(): SourceBufferQueue | undefined {
+    return this.queues.get('video') ?? this.queues.get('muxed') ?? this.queues.get('audio')
   }
 
   private requireMediaSource(): MediaSource {
@@ -118,6 +117,19 @@ export class MseController {
     }
 
     return this.mediaSource
+  }
+
+  private ensureQueue(track: CoreInitSegment['track'], mimeType: string): SourceBufferQueue {
+    const existing = this.queues.get(track)
+    if (existing !== undefined) {
+      return existing
+    }
+
+    const sourceBuffer = this.requireMediaSource().addSourceBuffer(mimeType)
+    const queue = new SourceBufferQueue(sourceBuffer)
+    this.sourceBuffers.set(track, sourceBuffer)
+    this.queues.set(track, queue)
+    return queue
   }
 }
 
@@ -159,4 +171,8 @@ function toAppendBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength)
   copy.set(bytes)
   return copy.buffer
+}
+
+function createMp4Mime(track: CoreInitSegment['track'], codec: string): string {
+  return track === 'audio' ? createMp4AudioMime(codec) : createMp4VideoMime(codec)
 }

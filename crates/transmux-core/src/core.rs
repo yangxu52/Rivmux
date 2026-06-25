@@ -80,6 +80,20 @@ impl TransmuxCore {
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }
+                CoreEvent::AudioConfig(config) => {
+                    self.events.push(event.clone());
+                    let mut mux_events = Vec::new();
+                    let mux_result = self.muxer.on_audio_config(config.clone(), &mut mux_events);
+                    self.events.extend(mux_events);
+                    self.capture_result(mux_result)?;
+                }
+                CoreEvent::AudioSample(sample) => {
+                    self.events.push(event.clone());
+                    let mut mux_events = Vec::new();
+                    let mux_result = self.muxer.push_audio(sample.clone(), &mut mux_events);
+                    self.events.extend(mux_events);
+                    self.capture_result(mux_result)?;
+                }
                 _ => self.events.push(event),
             }
         }

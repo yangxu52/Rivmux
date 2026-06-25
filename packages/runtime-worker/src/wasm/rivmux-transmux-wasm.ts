@@ -38,7 +38,7 @@ export type CoreWarning = {
   message: string
 }
 
-export type CoreTrackKind = 'video' | 'audio'
+export type CoreTrackKind = 'video' | 'audio' | 'muxed'
 
 export type CoreInitSegment = {
   track: CoreTrackKind
@@ -369,7 +369,7 @@ function normalizeRequiredPrimitive<T extends 'string' | 'number' | 'boolean'>(
 }
 
 function normalizeTrackKind(value: unknown): CoreTrackKind {
-  if (value === 'video' || value === 'audio') {
+  if (value === 'video' || value === 'audio' || value === 'muxed') {
     return value
   }
 
