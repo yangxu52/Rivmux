@@ -81,12 +81,111 @@ describe('Rivmux browser runtime', () => {
       secondVideo.remove()
     }
   })
+
+  it('recovers after a short HTTP-FLV read stall and exposes network idle stats', async () => {
+    await resetTestStreams()
+
+    const video = createVideo()
+    const player = createPlayer('m7-stall', {
+      autoPlay: false,
+      fixture: 'h264-aac',
+      stallMs: 250,
+      statsIntervalMs: 50,
+    })
+    const errors: unknown[] = []
+    const stats: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+    player.on('stats', (entry) => stats.push(entry))
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitForStreamState(['m7-stall'], ([state]) => state !== undefined && state.active && state.chunks === 1)
+      await waitForCoreSignal(errors, () => stats.some((entry) => isNumberFieldAtLeast(entry, 'networkIdleMs', 100)))
+      await waitForCoreSignal(errors, () => stats.some((entry) => isNumberFieldAtLeast(entry, 'outputBytes', 1)))
+      await waitForStreamState(['m7-stall'], ([state]) => state !== undefined && state.chunks >= 2 && state.bytes > 0)
+
+      expect(errors).toStrictEqual([])
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
+
+  it('starts a small grid, receives playback signals, and destroys tiles independently', async () => {
+    await resetTestStreams()
+
+    const ids = ['m7-grid-a', 'm7-grid-b', 'm7-grid-c']
+    const videos = ids.map(() => createVideo())
+    const players = ids.map((id) => createPlayer(id, { fixture: 'h264', statsIntervalMs: 100 }))
+    const errors = ids.map((): unknown[] => [])
+    const allErrors: unknown[] = []
+    const mediaInfo = ids.map((): unknown[] => [])
+    const stats = ids.map((): unknown[] => [])
+
+    players.forEach((player, index) => {
+      player.on('error', (error) => {
+        errors[index]?.push(error)
+        allErrors.push(error)
+      })
+      player.on('mediaInfo', (info) => mediaInfo[index]?.push(info))
+      player.on('stats', (entry) => stats[index]?.push(entry))
+    })
+
+    try {
+      await Promise.all(players.map((player, index) => player.attach(videos[index] as HTMLVideoElement)))
+      await Promise.all(players.map((player) => player.start()))
+
+      await waitForCoreSignal(allErrors, () => ids.every((_, index) => mediaInfo[index]?.some((info) => isRecord(info) && info.container === 'flv') === true))
+      await waitForCoreSignal(allErrors, () => ids.every((_, index) => stats[index]?.some((entry) => isNumberFieldAtLeast(entry, 'outputBytes', 1)) === true))
+      await waitForStreamState(ids, (states) => states.every((state) => state.opened === 1 && state.active && state.chunks > 0))
+
+      await players[1]?.destroy()
+      await waitForStreamState(ids, (states) => !states[1]?.active && states[1]?.closed === 1 && states[0]?.active === true && states[2]?.active === true)
+
+      expect(errors).toStrictEqual([[], [], []])
+    } finally {
+      await Promise.all(players.map((player) => player.destroy()))
+      videos.forEach((video) => video.remove())
+    }
+  })
+
+  it('emits a structured network error for HTTP failures in Chromium', async () => {
+    await resetTestStreams()
+
+    const video = createVideo()
+    const player = createPlayer('m7-network-error', { status: 503 })
+    const errors: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitFor(async () =>
+        errors.some((error) => isRecord(error) && error.kind === 'network' && error.code === 'RIVMUX_HTTP_STATUS' && error.terminal === true)
+      )
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
 })
 
-function createPlayer(streamId: string, options: { autoPlay?: boolean; fixture?: string } = {}): RivmuxPlayer {
+function createPlayer(
+  streamId: string,
+  options: { autoPlay?: boolean; fixture?: string; stallMs?: number; status?: number; statsIntervalMs?: number } = {}
+): RivmuxPlayer {
   const url = new URL(`/__rivmux-test/stream/${streamId}.flv`, window.location.href)
   if (options.fixture !== undefined) {
     url.searchParams.set('fixture', options.fixture)
+  }
+  if (options.stallMs !== undefined) {
+    url.searchParams.set('stallMs', String(options.stallMs))
+  }
+  if (options.status !== undefined) {
+    url.searchParams.set('status', String(options.status))
   }
 
   return new RivmuxPlayer(url.href, {
@@ -100,6 +199,9 @@ function createPlayer(streamId: string, options: { autoPlay?: boolean; fixture?:
         maxAttempts: 1,
         backoffMs: 0,
       },
+    },
+    diagnostics: {
+      ...(options.statsIntervalMs === undefined ? {} : { statsIntervalMs: options.statsIntervalMs }),
     },
   })
 }
@@ -160,4 +262,8 @@ async function waitForCoreSignal(errors: unknown[], predicate: () => boolean | P
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isNumberFieldAtLeast(value: unknown, field: string, minimum: number): boolean {
+  return isRecord(value) && typeof value[field] === 'number' && value[field] >= minimum
 }

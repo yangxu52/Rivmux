@@ -8,6 +8,7 @@ export class SourceBufferQueue {
   private readonly sourceBuffer: SourceBuffer
   private readonly queue: SourceBufferOperation[] = []
   private pendingDrain?: Promise<void>
+  private activeAppendBytes = 0
   private destroyed = false
 
   constructor(sourceBuffer: SourceBuffer) {
@@ -16,6 +17,10 @@ export class SourceBufferQueue {
 
   get length(): number {
     return this.queue.length + (this.sourceBuffer.updating ? 1 : 0)
+  }
+
+  get queuedBytes(): number {
+    return this.activeAppendBytes + this.queue.reduce((total, operation) => total + (operation.type === 'append' ? operation.data.byteLength : 0), 0)
   }
 
   get updating(): boolean {
@@ -65,6 +70,7 @@ export class SourceBufferQueue {
 
   reset(): void {
     this.queue.length = 0
+    this.activeAppendBytes = 0
   }
 
   destroy(): void {
@@ -76,17 +82,28 @@ export class SourceBufferQueue {
     try {
       while (this.queue.length > 0 && !this.destroyed) {
         await this.waitForIdle()
+        this.activeAppendBytes = 0
         const operation = this.queue.shift()
 
         if (operation?.type === 'append') {
-          this.sourceBuffer.appendBuffer(operation.data)
+          this.activeAppendBytes = operation.data.byteLength
+          try {
+            this.sourceBuffer.appendBuffer(operation.data)
+          } catch (cause) {
+            this.activeAppendBytes = 0
+            throw cause
+          }
         } else if (operation?.type === 'remove') {
           this.sourceBuffer.remove(operation.start, operation.end)
         }
       }
 
       await this.waitForIdle()
+      this.activeAppendBytes = 0
     } finally {
+      if (this.queue.length === 0 && !this.sourceBuffer.updating) {
+        this.activeAppendBytes = 0
+      }
       this.pendingDrain = undefined
     }
   }

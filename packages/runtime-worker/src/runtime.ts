@@ -20,11 +20,14 @@ export type RuntimeWorkerPort = {
 
 export type RuntimeMseController = {
   readonly appendQueueLength: number
+  readonly appendQueueBytes: number
   readonly sourceBufferUpdating: boolean
+  readonly sourceBufferCount: number
   readonly bufferedStart: number | undefined
   readonly bufferedEnd: number | undefined
   readonly bufferedDuration: number | undefined
   readonly bufferedRanges: BufferedRange[]
+  readonly bufferedRangeCount: number
   createMediaSourceHandle(): Promise<MediaSourceHandle>
   appendFixture(fixture: ReturnType<typeof createM1StaticFmp4Fixture>): Promise<void>
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
@@ -59,6 +62,8 @@ export class RuntimeWorker {
   private statsTickInFlight = false
   private loaderRunId = 0
   private outputBytes = 0
+  private appendQueueMaxLength = 0
+  private appendQueueMaxBytes = 0
 
   constructor(port: RuntimeWorkerPort, dependencies: RuntimeWorkerDependencies = {}) {
     this.port = port
@@ -124,9 +129,13 @@ export class RuntimeWorker {
       this.mse = this.createMseController()
     }
 
-    const handle = await this.mse.createMediaSourceHandle()
-    this.post({ type: 'media-source-handle', handle }, [handle])
-    this.state = 'attached'
+    try {
+      const handle = await this.mse.createMediaSourceHandle()
+      this.post({ type: 'media-source-handle', handle }, [handle])
+      this.state = 'attached'
+    } catch (cause) {
+      this.fail('mse', 'RIVMUX_MSE_ATTACH_FAILED', 'MSE media source attachment failed.', true, cause)
+    }
   }
 
   private async start(): Promise<void> {
@@ -147,10 +156,17 @@ export class RuntimeWorker {
       this.transmuxCore?.destroy()
       this.transmuxCore = transmuxCore
     } else {
-      await this.mse.appendFixture(fixture)
+      try {
+        await this.mse.appendFixture(fixture)
+      } catch (cause) {
+        this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+        return
+      }
     }
     this.state = 'started'
     this.outputBytes = hasTransmuxCore ? 0 : fixture.initSegment.byteLength + fixture.mediaSegment.byteLength
+    this.appendQueueMaxLength = 0
+    this.appendQueueMaxBytes = 0
     if (!hasTransmuxCore) {
       this.post({
         type: 'media-info',
@@ -277,18 +293,26 @@ export class RuntimeWorker {
 
   private postStats(loaderStats?: StreamLoaderStats): void {
     const metrics = this.lastLatencyMetrics
+    const mseStats = this.collectMseStats()
+    const loaderSnapshot = loaderStats ?? this.loader?.stats
     this.post({
       type: 'stats',
       stats: {
-        bytesReceived: loaderStats?.bytesReceived ?? this.loader?.stats.bytesReceived ?? 0,
-        currentNetworkSpeed: loaderStats?.currentNetworkSpeed ?? this.loader?.stats.currentNetworkSpeed ?? 0,
+        bytesReceived: loaderSnapshot?.bytesReceived ?? 0,
+        currentNetworkSpeed: loaderSnapshot?.currentNetworkSpeed ?? 0,
+        networkIdleMs: getNetworkIdleMs(loaderSnapshot, this.now()),
         outputBytes: this.outputBytes,
-        appendQueueLength: this.mse?.appendQueueLength ?? 0,
+        appendQueueLength: mseStats.appendQueueLength,
+        appendQueueBytes: mseStats.appendQueueBytes,
+        appendQueueMaxLength: this.appendQueueMaxLength,
+        appendQueueMaxBytes: this.appendQueueMaxBytes,
         loaderPaused: this.loader?.paused ?? false,
-        sourceBufferUpdating: this.mse?.sourceBufferUpdating ?? false,
+        sourceBufferUpdating: mseStats.sourceBufferUpdating,
+        sourceBufferCount: mseStats.sourceBufferCount,
         bufferedStart: metrics.bufferedStart ?? this.mse?.bufferedStart,
         bufferedEnd: metrics.bufferedEnd ?? this.mse?.bufferedEnd,
         bufferedDuration: metrics.bufferedDuration ?? this.mse?.bufferedDuration,
+        bufferedRangeCount: mseStats.bufferedRangeCount,
         currentTime: metrics.currentTime,
         liveLatency: metrics.liveLatency,
         playbackRate: metrics.playbackRate,
@@ -312,12 +336,16 @@ export class RuntimeWorker {
           this.state = 'fatal-error'
           return false
         case 'initSegment':
-          await this.mse?.appendInitSegment(event.data)
+          if (!(await this.appendToMse(() => this.mse?.appendInitSegment(event.data)))) {
+            return false
+          }
           this.outputBytes += event.data.bytes.byteLength
           await this.applyLatencyPolicy()
           break
         case 'mediaSegment':
-          await this.mse?.appendMediaSegment(event.data)
+          if (!(await this.appendToMse(() => this.mse?.appendMediaSegment(event.data)))) {
+            return false
+          }
           this.outputBytes += event.data.bytes.byteLength
           await this.applyLatencyPolicy()
           break
@@ -333,6 +361,37 @@ export class RuntimeWorker {
     }
 
     return true
+  }
+
+  private collectMseStats(): {
+    appendQueueLength: number
+    appendQueueBytes: number
+    sourceBufferUpdating: boolean
+    sourceBufferCount: number
+    bufferedRangeCount: number
+  } {
+    const appendQueueLength = this.mse?.appendQueueLength ?? 0
+    const appendQueueBytes = this.mse?.appendQueueBytes ?? 0
+    this.appendQueueMaxLength = Math.max(this.appendQueueMaxLength, appendQueueLength)
+    this.appendQueueMaxBytes = Math.max(this.appendQueueMaxBytes, appendQueueBytes)
+
+    return {
+      appendQueueLength,
+      appendQueueBytes,
+      sourceBufferUpdating: this.mse?.sourceBufferUpdating ?? false,
+      sourceBufferCount: this.mse?.sourceBufferCount ?? 0,
+      bufferedRangeCount: this.mse?.bufferedRangeCount ?? 0,
+    }
+  }
+
+  private async appendToMse(append: () => Promise<void> | undefined): Promise<boolean> {
+    try {
+      await append()
+      return true
+    } catch (cause) {
+      this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+      return false
+    }
   }
 
   private async applyLatencyPolicy(): Promise<void> {
@@ -419,6 +478,15 @@ export class RuntimeWorker {
 
 function getNetworkErrorCode(cause: unknown): string {
   return cause instanceof HttpFlvLoaderError ? cause.code : 'RIVMUX_HTTP_LOADER_FAILED'
+}
+
+function getNetworkIdleMs(stats: StreamLoaderStats | undefined, nowMs: number): number | undefined {
+  const markerMs = stats?.lastChunkAtMs ?? stats?.startedAtMs
+  if (markerMs === undefined) {
+    return undefined
+  }
+
+  return Math.max(nowMs - markerMs, 0)
 }
 
 function serializeCause(cause: unknown): unknown {

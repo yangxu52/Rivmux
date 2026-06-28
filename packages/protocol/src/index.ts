@@ -83,13 +83,19 @@ export type MediaInfo = {
 export type PlayerStats = {
   bytesReceived?: number
   currentNetworkSpeed?: number
+  networkIdleMs?: number
   outputBytes?: number
   appendQueueLength?: number
+  appendQueueBytes?: number
+  appendQueueMaxLength?: number
+  appendQueueMaxBytes?: number
   loaderPaused?: boolean
   sourceBufferUpdating?: boolean
+  sourceBufferCount?: number
   bufferedStart?: number
   bufferedEnd?: number
   bufferedDuration?: number
+  bufferedRangeCount?: number
   currentTime?: number
   liveLatency?: number
   playbackRate?: number

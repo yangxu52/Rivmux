@@ -46,6 +46,18 @@ export function createBrowserTestServer(): Plugin {
         state.active = true
         state.opened += 1
 
+        const forcedStatus = parsePositiveInteger(url.searchParams.get('status'))
+        if (forcedStatus !== undefined) {
+          response.writeHead(forcedStatus, {
+            'cache-control': 'no-store',
+            'content-type': 'text/plain; charset=utf-8',
+          })
+          response.end(`forced status ${forcedStatus}`)
+          state.active = false
+          state.closed += 1
+          return
+        }
+
         response.writeHead(200, {
           'cache-control': 'no-store',
           connection: 'keep-alive',
@@ -60,19 +72,32 @@ export function createBrowserTestServer(): Plugin {
             : fixture === 'h264-aac'
               ? createCoreH264AacFlvFixture()
               : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
-        const writeChunk = (): void => {
+        const writeChunk = (bytes: Uint8Array): void => {
           if (response.writableEnded) {
             return
           }
 
           state.chunks += 1
-          state.bytes += chunk.byteLength
-          response.write(chunk)
+          state.bytes += bytes.byteLength
+          response.write(bytes)
         }
 
-        writeChunk()
-        const interval = isCoreFixture ? undefined : setInterval(writeChunk, 50)
+        const stallMs = parsePositiveInteger(url.searchParams.get('stallMs'))
+        const splitAt = Math.max(1, Math.min(chunk.byteLength - 1, Math.floor(chunk.byteLength / 2)))
+        let stalledWriteTimer: ReturnType<typeof setTimeout> | undefined
+        if (isCoreFixture && stallMs !== undefined && chunk.byteLength > 1) {
+          writeChunk(chunk.slice(0, splitAt))
+          stalledWriteTimer = setTimeout(() => {
+            writeChunk(chunk.slice(splitAt))
+          }, stallMs)
+        } else {
+          writeChunk(chunk)
+        }
+        const interval = isCoreFixture ? undefined : setInterval(() => writeChunk(chunk), 50)
         request.on('close', () => {
+          if (stalledWriteTimer !== undefined) {
+            clearTimeout(stalledWriteTimer)
+          }
           if (interval !== undefined) {
             clearInterval(interval)
           }
@@ -99,6 +124,15 @@ function getStreamState(streamStates: Map<string, StreamState>, id: string): Str
   }
   streamStates.set(id, state)
   return state
+}
+
+function parsePositiveInteger(value: string | null): number | undefined {
+  if (value === null) {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 let cachedCoreH264FlvFixture: Uint8Array | undefined

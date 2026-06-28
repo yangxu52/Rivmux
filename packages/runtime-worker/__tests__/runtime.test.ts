@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { HttpFlvLoaderError } from '../src/loader/http-flv-loader'
 import { RuntimeWorker } from '../src/runtime'
 
 import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from 'rivmux-protocol'
@@ -81,6 +82,53 @@ describe('RuntimeWorker', () => {
         bytesReceived: 3,
         currentNetworkSpeed: 1,
         outputBytes: 28904,
+      }),
+    })
+  })
+
+  it('emits append queue, memory-oriented, and network idle stats', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader({
+      bytesReceived: 10,
+      currentNetworkSpeed: 5,
+      startedAtMs: 1000,
+      lastChunkAtMs: 1125,
+    })
+    const mse = new MockMseController([
+      { start: 0, end: 1 },
+      { start: 2, end: 4 },
+    ])
+    mse.appendQueueLength = 2
+    mse.appendQueueBytes = 4096
+    mse.sourceBufferUpdating = true
+    mse.sourceBufferCount = 2
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+      now: () => 1250,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 0.5, readyState: 3, playbackRate: 1, paused: false } })
+    await runtime.handleCommand({ type: 'stop' })
+
+    expect(port.messages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        bytesReceived: 10,
+        currentNetworkSpeed: 5,
+        networkIdleMs: 125,
+        appendQueueLength: 2,
+        appendQueueBytes: 4096,
+        appendQueueMaxLength: 2,
+        appendQueueMaxBytes: 4096,
+        sourceBufferUpdating: true,
+        sourceBufferCount: 2,
+        bufferedRangeCount: 2,
       }),
     })
   })
@@ -280,6 +328,71 @@ describe('RuntimeWorker', () => {
     })
   })
 
+  it('reports loader failures as terminal structured network errors', async () => {
+    const port = new MockPort()
+    const loader = new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(loader.closed).toBe(true)
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: {
+        kind: 'network',
+        code: 'RIVMUX_HTTP_STATUS',
+        message: 'HTTP Fetch loader failed.',
+        terminal: true,
+        cause: {
+          name: 'HttpFlvLoaderError',
+          message: 'HTTP status 503.',
+        },
+      },
+    })
+  })
+
+  it('reports MSE append failures as terminal structured MSE errors and closes the loader', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const mse = new MockMseController()
+    mse.appendInitError = new Error('append init failed')
+    const transmuxCore = new MockTransmuxCore([
+      [{ type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: new Uint8Array([1, 2, 3]) } }],
+    ])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(loader.closed).toBe(true)
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: {
+        kind: 'mse',
+        code: 'RIVMUX_MSE_APPEND_FAILED',
+        message: 'MSE append failed.',
+        terminal: true,
+        cause: {
+          name: 'Error',
+          message: 'append init failed',
+        },
+      },
+    })
+  })
+
   it('closes the loader before reporting stopped', async () => {
     const port = new MockPort()
     const loader = new BlockingLoader()
@@ -334,11 +447,14 @@ class MockPort {
 }
 
 class MockMseController implements RuntimeMseController {
-  readonly appendQueueLength = 0
-  readonly sourceBufferUpdating = false
+  appendQueueLength = 0
+  appendQueueBytes = 0
+  sourceBufferUpdating = false
+  sourceBufferCount = 1
   readonly initSegments: Array<Extract<CoreEvent, { type: 'initSegment' }>['data']> = []
   readonly mediaSegments: Array<Extract<CoreEvent, { type: 'mediaSegment' }>['data']> = []
   readonly cleanupRequests: number[] = []
+  appendInitError?: Error
   appendedFixtureCount = 0
 
   constructor(readonly bufferedRanges = [{ start: 0, end: 1 }]) {}
@@ -356,6 +472,10 @@ class MockMseController implements RuntimeMseController {
     return this.bufferedRanges.reduce((total, range) => total + range.end - range.start, 0)
   }
 
+  get bufferedRangeCount(): number {
+    return this.bufferedRanges.length
+  }
+
   createMediaSourceHandle(): Promise<MediaSourceHandle> {
     return Promise.resolve({} as MediaSourceHandle)
   }
@@ -366,6 +486,10 @@ class MockMseController implements RuntimeMseController {
   }
 
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void> {
+    if (this.appendInitError !== undefined) {
+      return Promise.reject(this.appendInitError)
+    }
+
     this.initSegments.push(segment)
     return Promise.resolve()
   }
@@ -442,10 +566,7 @@ class MockLoader implements StreamLoader {
 }
 
 class BlockingLoader implements StreamLoader {
-  readonly stats: StreamLoaderStats = {
-    bytesReceived: 0,
-    currentNetworkSpeed: 0,
-  }
+  readonly stats: StreamLoaderStats
   closed = false
   paused = false
   pauseCount = 0
@@ -455,6 +576,10 @@ class BlockingLoader implements StreamLoader {
   private readonly opened = new Promise<void>((resolve) => {
     this.resolveOpen = resolve
   })
+
+  constructor(stats: StreamLoaderStats = { bytesReceived: 0, currentNetworkSpeed: 0 }) {
+    this.stats = stats
+  }
 
   open(): Promise<void> {
     this.resolveOpen?.()
@@ -486,6 +611,47 @@ class BlockingLoader implements StreamLoader {
 
   waitForOpen(): Promise<void> {
     return this.opened
+  }
+}
+
+class FailingOpenLoader implements StreamLoader {
+  readonly stats: StreamLoaderStats = {
+    bytesReceived: 0,
+    currentNetworkSpeed: 0,
+  }
+  closed = false
+  paused = false
+  private resolveDone?: () => void
+  private readonly done = new Promise<void>((resolve) => {
+    this.resolveDone = resolve
+  })
+
+  constructor(private readonly error: Error) {}
+
+  open(): Promise<void> {
+    return Promise.reject(this.error)
+  }
+
+  read(): Promise<StreamChunk | null> {
+    return Promise.resolve(null)
+  }
+
+  pause(): void {
+    this.paused = true
+  }
+
+  resume(): void {
+    this.paused = false
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    this.resolveDone?.()
+    return Promise.resolve()
+  }
+
+  waitForDone(): Promise<void> {
+    return this.done
   }
 }
 

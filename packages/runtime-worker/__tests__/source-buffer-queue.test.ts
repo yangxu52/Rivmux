@@ -24,6 +24,26 @@ describe('SourceBufferQueue', () => {
     sourceBuffer.finishUpdate()
     await appendDone
     expect(queue.length).toBe(0)
+    expect(queue.queuedBytes).toBe(0)
+  })
+
+  it('reports active and pending append bytes', async () => {
+    const sourceBuffer = new MockSourceBuffer()
+    const queue = new SourceBufferQueue(sourceBuffer as unknown as SourceBuffer)
+    const first = new ArrayBuffer(2)
+    const second = new ArrayBuffer(3)
+    const appendDone = Promise.all([queue.append(first), queue.append(second)])
+
+    await flushPromises()
+    expect(queue.queuedBytes).toBe(5)
+
+    sourceBuffer.finishUpdate()
+    await flushPromises()
+    expect(queue.queuedBytes).toBe(3)
+
+    sourceBuffer.finishUpdate()
+    await appendDone
+    expect(queue.queuedBytes).toBe(0)
   })
 
   it('queues cleanup removals before later appends', async () => {

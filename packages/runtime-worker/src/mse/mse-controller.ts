@@ -15,8 +15,16 @@ export class MseController {
     return Array.from(this.queues.values()).reduce((total, queue) => total + queue.length, 0)
   }
 
+  get appendQueueBytes(): number {
+    return Array.from(this.queues.values()).reduce((total, queue) => total + queue.queuedBytes, 0)
+  }
+
   get sourceBufferUpdating(): boolean {
     return Array.from(this.queues.values()).some((queue) => queue.updating)
+  }
+
+  get sourceBufferCount(): number {
+    return this.sourceBuffers.size
   }
 
   get bufferedStart(): number | undefined {
@@ -33,6 +41,10 @@ export class MseController {
 
   get bufferedRanges(): BufferedRange[] {
     return this.primaryQueue?.bufferedRanges ?? []
+  }
+
+  get bufferedRangeCount(): number {
+    return Array.from(this.queues.values()).reduce((total, queue) => total + queue.bufferedRanges.length, 0)
   }
 
   async createMediaSourceHandle(): Promise<MediaSourceHandle> {
