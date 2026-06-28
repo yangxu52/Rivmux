@@ -18,13 +18,13 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsdown && node ../../scripts/build-player-wasm-assets.mjs",
+    "build": "tsdown",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "clean": "rimraf dist node_modules/.tmp"
   },
   "dependencies": {
-    "rivmux-runtime-worker": "workspace:*",
+    "@rivmux/runtime-worker": "workspace:*",
     "rivmux-protocol": "workspace:*"
   },
   "devDependencies": {

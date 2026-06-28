@@ -27,10 +27,13 @@ describe('RivmuxPlayer', () => {
     player.on('destroyed', destroyed)
 
     const attachPromise = player.attach(video)
+    expect(worker.commands).toStrictEqual([])
+
+    worker.emit({ type: 'worker-ready' })
     expect(worker.commands[0]).toMatchObject({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv' })
     expect(worker.commands[0]?.options).toMatchObject({
       runtime: {
-        wasmUrl: expect.stringMatching(/rivmux_transmux_core_bg\.wasm$/u),
+        preferWorkerMse: true,
       },
     })
     expect(worker.commands[1]).toStrictEqual({ type: 'attach-media-source' })
@@ -90,6 +93,8 @@ describe('RivmuxPlayer', () => {
 
     const attachA = players[0]?.attach(createMockVideo())
     const attachB = players[1]?.attach(createMockVideo())
+    workers[0]?.emit({ type: 'worker-ready' })
+    workers[1]?.emit({ type: 'worker-ready' })
     workers[0]?.emit({ type: 'media-source-handle', handle: { id: 'a' } as unknown as MediaSourceHandle })
     workers[1]?.emit({ type: 'media-source-handle', handle: { id: 'b' } as unknown as MediaSourceHandle })
     await Promise.all([attachA, attachB])

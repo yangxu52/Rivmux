@@ -8,12 +8,6 @@
     /* Module resolution */
     "moduleResolution": "bundler",
     "esModuleInterop": true,
-    "baseUrl": ".",
-    "paths": {
-      "rivmux-player": ["packages/player/src/index.ts"],
-      "rivmux-runtime-worker": ["packages/runtime-worker/src/worker-entry.ts"],
-      "rivmux-protocol": ["packages/protocol/src/index.ts"]
-    },
 
     /* Bundler mode */
     "allowImportingTsExtensions": false,

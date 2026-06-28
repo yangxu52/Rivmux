@@ -21,7 +21,6 @@ describe('normalizePlayerOptions', () => {
     expect(options.network.retry).toStrictEqual({ maxAttempts: 5, backoffMs: 500 })
     expect(options.runtime).toMatchObject({
       preferWorkerMse: true,
-      wasmUrl: expect.stringMatching(/rivmux_transmux_core_bg\.wasm$/u),
     })
     expect(options.diagnostics).toStrictEqual({ statsIntervalMs: 1000, debug: true })
   })

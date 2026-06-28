@@ -1,7 +1,5 @@
 import type { NormalizedRivmuxPlayerOptions, RivmuxPlayerOptions } from 'rivmux-protocol'
 
-const DEFAULT_WASM_URL = new URL('./rivmux_transmux_core_bg.wasm', import.meta.url).href
-
 export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   playback: {
     autoPlay: true,
@@ -24,7 +22,6 @@ export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   },
   runtime: {
     preferWorkerMse: true,
-    wasmUrl: DEFAULT_WASM_URL,
   },
   diagnostics: {
     statsIntervalMs: 1000,
@@ -57,7 +54,6 @@ export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): Norma
     runtime: {
       ...DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime,
       ...options.runtime,
-      wasmUrl: options.runtime?.wasmUrl ?? DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime.wasmUrl,
     },
     diagnostics: {
       ...DEFAULT_RIVMUX_PLAYER_OPTIONS.diagnostics,

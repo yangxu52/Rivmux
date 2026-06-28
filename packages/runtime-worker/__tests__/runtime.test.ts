@@ -41,6 +41,7 @@ describe('RuntimeWorker', () => {
     const runtime = new RuntimeWorker(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
+      createTransmuxCore: () => undefined,
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -184,6 +185,7 @@ describe('RuntimeWorker', () => {
     const runtime = new RuntimeWorker(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
+      createTransmuxCore: () => undefined,
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -202,6 +204,7 @@ describe('RuntimeWorker', () => {
     const runtime = new RuntimeWorker(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
+      createTransmuxCore: () => undefined,
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })

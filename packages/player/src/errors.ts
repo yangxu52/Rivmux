@@ -7,3 +7,9 @@ export function createPlayerError(kind: PlayerErrorKind, code: string, message: 
 export function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
+
+export function playerErrorToException(error: PlayerError): Error {
+  const exception = toError(error.cause ?? error.message)
+  exception.name = error.code
+  return exception
+}

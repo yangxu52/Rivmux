@@ -1,16 +1,16 @@
 import { PlayerEventEmitter } from './events'
-import { createPlayerError } from './errors'
+import { createPlayerError, playerErrorToException } from './errors'
 import { detectMainThreadRuntime } from './feature-detect'
 import { normalizePlayerOptions } from './options'
-import { createDefaultWorkerFactory, playerErrorToException, WorkerClient } from './worker-client'
+import { createRuntimeWorker, WorkerClient } from '@rivmux/runtime-worker'
 
 import type { NormalizedRivmuxPlayerOptions, PlayerError, PlayerEventListener, PlayerEventType, RivmuxPlayerOptions, WorkerMessage } from 'rivmux-protocol'
-import type { WorkerFactory } from './worker-client'
+import type { RuntimeWorkerFactory } from '@rivmux/runtime-worker'
 
 type PlayerState = 'idle' | 'attached' | 'started' | 'stopped' | 'destroyed'
 
 export type RivmuxPlayerInternals = {
-  workerFactory?: WorkerFactory
+  workerFactory?: RuntimeWorkerFactory
   detectRuntime?: () => PlayerError | undefined
   idFactory?: () => string
 }
@@ -20,7 +20,7 @@ export class RivmuxPlayer {
   readonly options: NormalizedRivmuxPlayerOptions
   private readonly id: string
   private readonly events = new PlayerEventEmitter()
-  private readonly workerFactory: WorkerFactory
+  private readonly workerFactory: RuntimeWorkerFactory
   private readonly detectRuntime: () => PlayerError | undefined
   private workerClient?: WorkerClient
   private video?: HTMLVideoElement
@@ -30,7 +30,7 @@ export class RivmuxPlayer {
     this.url = url
     this.options = normalizePlayerOptions(options)
     this.id = internals.idFactory?.() ?? createPlayerId()
-    this.workerFactory = internals.workerFactory ?? createDefaultWorkerFactory()
+    this.workerFactory = internals.workerFactory ?? createRuntimeWorker
     this.detectRuntime = internals.detectRuntime ?? detectMainThreadRuntime
   }
 

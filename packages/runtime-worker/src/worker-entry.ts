@@ -1,6 +1,6 @@
 import { RuntimeWorker } from './runtime'
 
-import type { WorkerCommand } from 'rivmux-protocol'
+import type { WorkerCommand, WorkerMessage } from 'rivmux-protocol'
 
 export { RuntimeWorker } from './runtime'
 export { M1_VIDEO_MIME, createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
@@ -15,7 +15,7 @@ export type { CoreEvent, TransmuxCoreHost, TransmuxCoreWasmConstructor } from '.
 
 type DedicatedWorkerScopeLike = {
   addEventListener(type: 'message', listener: (event: MessageEvent<WorkerCommand>) => void): void
-  postMessage(message: unknown, transfer?: Transferable[]): void
+  postMessage(message: WorkerMessage, transfer?: Transferable[]): void
   close(): void
 }
 
@@ -28,6 +28,7 @@ export function startRuntimeWorker(scope: DedicatedWorkerScopeLike): RuntimeWork
   scope.addEventListener('message', (event) => {
     void runtime.handleCommand(event.data)
   })
+  scope.postMessage({ type: 'worker-ready' })
 
   return runtime
 }

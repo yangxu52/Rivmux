@@ -1,4 +1,5 @@
 import { WasmTransmuxCoreHost } from './rivmux-transmux-wasm'
+import { TransmuxCore as BundledTransmuxCore } from '../../../../crates/transmux-core/pkg/rivmux_transmux_core.js'
 
 import type { TransmuxCoreHost, TransmuxCoreWasmConstructor } from './rivmux-transmux-wasm'
 
@@ -13,9 +14,13 @@ export function createWasmTransmuxCoreHost(Core: TransmuxCoreWasmConstructor | u
   return Core === undefined ? undefined : new WasmTransmuxCoreHost(Core)
 }
 
-export async function loadWasmTransmuxCoreHost(wasmUrl: string | undefined): Promise<TransmuxCoreHost | undefined> {
+export function createBundledWasmTransmuxCoreHost(): TransmuxCoreHost {
+  return new WasmTransmuxCoreHost(BundledTransmuxCore)
+}
+
+export async function loadWasmTransmuxCoreHost(wasmUrl: string | undefined): Promise<TransmuxCoreHost> {
   if (wasmUrl === undefined) {
-    return undefined
+    return createBundledWasmTransmuxCoreHost()
   }
 
   const module = await nativeDynamicImport(toWasmBindgenGlueUrl(wasmUrl))

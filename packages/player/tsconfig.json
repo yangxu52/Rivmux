@@ -6,10 +6,10 @@
     "emitDeclarationOnly": true,
     "declarationMap": true,
     "rootDir": "./src",
-    "outDir": "./node_modules/.tmp/types",
+    "outDir": "./dist",
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo"
   },
-  "references": [{ "path": "../protocol" }],
+  "references": [{ "path": "../protocol" }, { "path": "../runtime-worker" }],
   "include": ["src/**/*"],
   "exclude": ["dist"]
 }

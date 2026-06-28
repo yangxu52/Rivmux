@@ -133,6 +133,7 @@ export type WorkerCommand =
   | { type: 'destroy' }
 
 export type WorkerMessage =
+  | { type: 'worker-ready' }
   | { type: 'ready' }
   | { type: 'media-source-handle'; handle: MediaSourceHandle }
   | { type: 'media-info'; mediaInfo: MediaInfo }

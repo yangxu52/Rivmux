@@ -1,5 +1,5 @@
 {
-  "name": "rivmux-runtime-worker",
+  "name": "@rivmux/runtime-worker",
   "version": "0.0.1",
   "description": "Dedicated Worker runtime package for Rivmux.",
   "license": "Apache-2.0",
@@ -10,15 +10,16 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/worker-entry.d.ts",
-      "import": "./dist/worker-entry.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
-  "main": "./dist/worker-entry.js",
-  "module": "./dist/worker-entry.js",
-  "types": "./dist/worker-entry.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsdown",
+    "build": "pnpm run build:wasm && tsdown",
+    "build:wasm": "wasm-pack build --target bundler --out-dir pkg --out-name rivmux_transmux_core --no-opt ../../crates/transmux-core --features wasm",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "clean": "rimraf dist node_modules/.tmp"
@@ -27,6 +28,7 @@
     "rivmux-protocol": "workspace:*"
   },
   "devDependencies": {
+    "rolldown-plugin-wasm": "^0.3.2",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

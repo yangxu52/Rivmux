@@ -77,12 +77,12 @@ importers:
 
   packages/player:
     dependencies:
+      '@rivmux/runtime-worker':
+        specifier: workspace:*
+        version: link:../runtime-worker
       rivmux-protocol:
         specifier: workspace:*
         version: link:../protocol
-      rivmux-runtime-worker:
-        specifier: workspace:*
-        version: link:../runtime-worker
     devDependencies:
       tsdown:
         specifier: 'catalog:'
@@ -112,6 +112,9 @@ importers:
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
+      rolldown-plugin-wasm:
+        specifier: ^0.3.2
+        version: 0.3.2(rolldown@1.1.2)
       tsdown:
         specifier: 'catalog:'
         version: 0.22.3(typescript@5.9.3)
@@ -1532,6 +1535,12 @@ packages:
         optional: true
       vue-tsc:
         optional: true
+
+  rolldown-plugin-wasm@0.3.2:
+    resolution: {integrity: sha512-WYjcRNvX8i3PoAPIbmENebUhn1b3nbkorLSGMBGBP5mPaSE5Jh5JWuVhRm3Nl5n6VL23OtWh3TOm0wwMYYV+8Q==}
+    engines: {node: ^22.18.0 || >=24.0.0}
+    peerDependencies:
+      rolldown: ^1.0.0
 
   rolldown@1.0.3:
     resolution: {integrity: sha512-i00lAJ2ks1BYr7rjNjKC7BcqAS7nVfiT3QX1SI5aY+AFHblCmaUf9OE9dbdzDvW6dJxbi2ZCZiy9v3CcwOiX3g==}
@@ -3215,6 +3224,10 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - oxc-resolver
+
+  rolldown-plugin-wasm@0.3.2(rolldown@1.1.2):
+    dependencies:
+      rolldown: 1.1.2
 
   rolldown@1.0.3:
     dependencies:
