@@ -18,13 +18,13 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "pnpm run build:wasm && tsdown",
-    "build:wasm": "wasm-pack build --target bundler --out-dir pkg --out-name rivmux_transmux_core --no-opt ../../crates/transmux-core --features wasm",
+    "build": "pnpm --filter @rivmux/transmux-core run build && tsdown",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "clean": "rimraf dist node_modules/.tmp"
   },
   "dependencies": {
+    "@rivmux/transmux-core": "workspace:*",
     "rivmux-protocol": "workspace:*"
   },
   "devDependencies": {

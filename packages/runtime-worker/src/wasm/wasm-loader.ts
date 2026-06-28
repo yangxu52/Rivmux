@@ -1,5 +1,5 @@
 import { WasmTransmuxCoreHost } from './rivmux-transmux-wasm'
-import { TransmuxCore as BundledTransmuxCore } from '../../../../crates/transmux-core/pkg/rivmux_transmux_core.js'
+import { TransmuxCore as BundledTransmuxCore } from '@rivmux/transmux-core'
 
 import type { TransmuxCoreHost, TransmuxCoreWasmConstructor } from './rivmux-transmux-wasm'
 

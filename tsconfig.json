@@ -27,5 +27,10 @@
 
   /* Workspace package graph */
   "files": [],
-  "references": [{ "path": "./packages/protocol" }, { "path": "./packages/runtime-worker" }, { "path": "./packages/player" }]
+  "references": [
+    { "path": "./crates/transmux-core" },
+    { "path": "./packages/protocol" },
+    { "path": "./packages/runtime-worker" },
+    { "path": "./packages/player" }
+  ]
 }

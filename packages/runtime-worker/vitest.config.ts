@@ -4,7 +4,7 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: '../../../../crates/transmux-core/pkg/rivmux_transmux_core.js',
+        find: '@rivmux/transmux-core',
         replacement: new URL('./__tests__/stubs/rivmux-transmux-core.ts', import.meta.url).pathname,
       },
     ],

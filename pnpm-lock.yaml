@@ -78,6 +78,12 @@ importers:
         specifier: 'catalog:'
         version: 4.1.9(@types/node@26.0.0)(@vitest/browser-playwright@4.1.9)(vite@8.0.16(@types/node@26.0.0)(jiti@2.6.1)(yaml@2.9.0))
 
+  crates/transmux-core:
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
   packages/player:
     dependencies:
       '@rivmux/runtime-worker':
@@ -111,6 +117,9 @@ importers:
 
   packages/runtime-worker:
     dependencies:
+      '@rivmux/transmux-core':
+        specifier: workspace:*
+        version: link:../../crates/transmux-core
       rivmux-protocol:
         specifier: workspace:*
         version: link:../protocol

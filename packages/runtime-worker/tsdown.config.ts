@@ -14,6 +14,9 @@ export default defineConfig({
   ],
   format: 'esm',
   platform: 'browser',
+  deps: {
+    alwaysBundle: ['@rivmux/transmux-core'],
+  },
   outDir: 'dist',
   sourcemap: true,
   clean: true,

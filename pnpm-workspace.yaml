@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - crates/*
 
 catalog:
   '@vitest/browser-playwright': ^4.1.9

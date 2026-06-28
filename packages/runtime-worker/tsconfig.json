@@ -10,7 +10,7 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
     "types": ["rolldown-plugin-wasm/types"]
   },
-  "references": [{ "path": "../protocol" }],
+  "references": [{ "path": "../protocol" }, { "path": "../../crates/transmux-core" }],
   "include": ["src/**/*"],
   "exclude": ["dist"]
 }
