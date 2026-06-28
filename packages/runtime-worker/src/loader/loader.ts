@@ -23,8 +23,11 @@ export type StreamLoaderConfig = {
 
 export type StreamLoader = {
   readonly closed: boolean
+  readonly paused: boolean
   readonly stats: StreamLoaderStats
   open(): Promise<void>
   read(): Promise<StreamChunk | null>
+  pause(): void
+  resume(): void
   close(): Promise<void>
 }

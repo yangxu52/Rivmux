@@ -85,13 +85,35 @@ export type PlayerStats = {
   currentNetworkSpeed?: number
   outputBytes?: number
   appendQueueLength?: number
+  loaderPaused?: boolean
   sourceBufferUpdating?: boolean
   bufferedStart?: number
   bufferedEnd?: number
   bufferedDuration?: number
+  currentTime?: number
   liveLatency?: number
   playbackRate?: number
+  readyState?: number
   droppedFrames?: number
+}
+
+export type VideoElementState = {
+  currentTime: number
+  readyState: number
+  playbackRate: number
+  paused: boolean
+  droppedFrames?: number
+}
+
+export type PlaybackControlAction =
+  | { type: 'play'; reason: 'startup-buffer-ready' }
+  | { type: 'set-playback-rate'; playbackRate: number; reason: 'latency-above-target' | 'latency-near-target' }
+  | { type: 'seek'; targetTime: number; reason: 'latency-max-exceeded' }
+
+export type PlaybackControlResult = {
+  type: PlaybackControlAction['type']
+  accepted: boolean
+  message?: string
 }
 
 export type PlayerErrorKind = 'network' | 'unsupported' | 'demux' | 'codec' | 'mux' | 'mse' | 'runtime'
@@ -130,6 +152,8 @@ export type WorkerCommand =
   | { type: 'start' }
   | { type: 'stop' }
   | { type: 'update-options'; options: Partial<NormalizedRivmuxPlayerOptions> }
+  | { type: 'video-state'; state: VideoElementState }
+  | { type: 'playback-control-result'; result: PlaybackControlResult }
   | { type: 'destroy' }
 
 export type WorkerMessage =
@@ -140,5 +164,6 @@ export type WorkerMessage =
   | { type: 'stats'; stats: PlayerStats }
   | { type: 'warning'; warning: PlayerWarning }
   | { type: 'error'; error: PlayerError }
+  | { type: 'playback-control'; action: PlaybackControlAction }
   | { type: 'stopped' }
   | { type: 'destroyed' }

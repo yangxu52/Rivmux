@@ -1,11 +1,14 @@
 import { createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
+import { LatencyController } from './latency/latency-controller'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
 import { loadWasmTransmuxCoreHost } from './wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from './wasm/rivmux-transmux-wasm'
 
+import type { BufferedRange } from './latency/buffer-ranges'
+import type { LatencyMetrics } from './latency/latency-controller'
 import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
-import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerCommand, WorkerMessage } from 'rivmux-protocol'
+import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, WorkerCommand, WorkerMessage } from 'rivmux-protocol'
 import type { CoreEvent, TransmuxCoreHost } from './wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
@@ -21,10 +24,12 @@ export type RuntimeMseController = {
   readonly bufferedStart: number | undefined
   readonly bufferedEnd: number | undefined
   readonly bufferedDuration: number | undefined
+  readonly bufferedRanges: BufferedRange[]
   createMediaSourceHandle(): Promise<MediaSourceHandle>
   appendFixture(fixture: ReturnType<typeof createM1StaticFmp4Fixture>): Promise<void>
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
   appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void>
+  cleanupBefore(cutoff: number): Promise<void>
   destroy(): void
 }
 
@@ -32,6 +37,7 @@ export type RuntimeWorkerDependencies = {
   createMseController?: () => RuntimeMseController
   createLoader?: (config: StreamLoaderConfig) => StreamLoader
   createTransmuxCore?: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
+  now?: () => number
 }
 
 export class RuntimeWorker {
@@ -39,12 +45,18 @@ export class RuntimeWorker {
   private readonly createMseController: () => RuntimeMseController
   private readonly createLoader: (config: StreamLoaderConfig) => StreamLoader
   private readonly createTransmuxCore: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
+  private readonly now: () => number
   private state: RuntimeState = 'idle'
   private url?: string
   private options?: NormalizedRivmuxPlayerOptions
   private mse?: RuntimeMseController
   private loader?: StreamLoader
   private transmuxCore?: TransmuxCoreHost
+  private latencyController?: LatencyController
+  private videoState?: VideoElementState
+  private lastLatencyMetrics: LatencyMetrics = {}
+  private statsTimer?: ReturnType<typeof setInterval>
+  private statsTickInFlight = false
   private loaderRunId = 0
   private outputBytes = 0
 
@@ -53,6 +65,7 @@ export class RuntimeWorker {
     this.createMseController = dependencies.createMseController ?? (() => new MseController())
     this.createLoader = dependencies.createLoader ?? ((config) => new HttpFlvLoader(config))
     this.createTransmuxCore = dependencies.createTransmuxCore ?? ((options) => loadWasmTransmuxCoreHost(options.runtime.wasmUrl))
+    this.now = dependencies.now ?? (() => performance.now())
   }
 
   async handleCommand(command: WorkerCommand): Promise<void> {
@@ -65,6 +78,7 @@ export class RuntimeWorker {
         case 'init':
           this.url = command.url
           this.options = command.options
+          this.latencyController = createLatencyController(command.options)
           this.state = 'ready'
           this.post({ type: 'ready' })
           return
@@ -78,7 +92,18 @@ export class RuntimeWorker {
           await this.stop()
           return
         case 'update-options':
-          this.options = this.options === undefined ? undefined : { ...this.options, ...command.options }
+          this.options = this.options === undefined ? undefined : mergeOptions(this.options, command.options)
+          if (this.options !== undefined) {
+            this.latencyController = createLatencyController(this.options)
+          }
+          return
+        case 'video-state':
+          this.videoState = command.state
+          await this.applyLatencyPolicy()
+          this.postStats()
+          return
+        case 'playback-control-result':
+          this.latencyController?.recordPlaybackControlResult(command.result)
           return
         case 'destroy':
           await this.destroy()
@@ -137,6 +162,8 @@ export class RuntimeWorker {
         },
       })
     }
+    this.startStatsTimer()
+    await this.applyLatencyPolicy()
     this.postStats()
     this.startLoader()
   }
@@ -145,6 +172,9 @@ export class RuntimeWorker {
     await this.closeLoader()
     this.mse?.destroy()
     this.mse = undefined
+    this.latencyController?.reset()
+    this.videoState = undefined
+    this.lastLatencyMetrics = {}
     this.state = 'stopped'
     this.post({ type: 'stopped' })
   }
@@ -153,6 +183,9 @@ export class RuntimeWorker {
     await this.closeLoader()
     this.mse?.destroy()
     this.mse = undefined
+    this.latencyController?.reset()
+    this.videoState = undefined
+    this.lastLatencyMetrics = {}
     this.state = 'destroyed'
     this.post({ type: 'destroyed' })
     this.port.close()
@@ -182,6 +215,7 @@ export class RuntimeWorker {
       await loader.open()
 
       while (this.isCurrentLoader(loader, runId)) {
+        await this.applyLatencyPolicy()
         const chunk = await loader.read()
         if (chunk === null) {
           break
@@ -192,6 +226,7 @@ export class RuntimeWorker {
           await this.closeCurrentLoader(loader, runId)
           return
         }
+        await this.applyLatencyPolicy()
         this.postStats(loader.stats)
       }
     } catch (cause) {
@@ -210,6 +245,7 @@ export class RuntimeWorker {
   }
 
   private async closeLoader(): Promise<void> {
+    this.stopStatsTimer()
     const loader = this.loader
     if (loader === undefined) {
       return
@@ -227,6 +263,7 @@ export class RuntimeWorker {
       return
     }
 
+    this.stopStatsTimer()
     this.loader = undefined
     this.loaderRunId += 1
     this.transmuxCore?.destroy()
@@ -239,6 +276,7 @@ export class RuntimeWorker {
   }
 
   private postStats(loaderStats?: StreamLoaderStats): void {
+    const metrics = this.lastLatencyMetrics
     this.post({
       type: 'stats',
       stats: {
@@ -246,10 +284,16 @@ export class RuntimeWorker {
         currentNetworkSpeed: loaderStats?.currentNetworkSpeed ?? this.loader?.stats.currentNetworkSpeed ?? 0,
         outputBytes: this.outputBytes,
         appendQueueLength: this.mse?.appendQueueLength ?? 0,
+        loaderPaused: this.loader?.paused ?? false,
         sourceBufferUpdating: this.mse?.sourceBufferUpdating ?? false,
-        bufferedStart: this.mse?.bufferedStart,
-        bufferedEnd: this.mse?.bufferedEnd,
-        bufferedDuration: this.mse?.bufferedDuration,
+        bufferedStart: metrics.bufferedStart ?? this.mse?.bufferedStart,
+        bufferedEnd: metrics.bufferedEnd ?? this.mse?.bufferedEnd,
+        bufferedDuration: metrics.bufferedDuration ?? this.mse?.bufferedDuration,
+        currentTime: metrics.currentTime,
+        liveLatency: metrics.liveLatency,
+        playbackRate: metrics.playbackRate,
+        readyState: metrics.readyState,
+        droppedFrames: metrics.droppedFrames,
       },
     })
   }
@@ -270,10 +314,12 @@ export class RuntimeWorker {
         case 'initSegment':
           await this.mse?.appendInitSegment(event.data)
           this.outputBytes += event.data.bytes.byteLength
+          await this.applyLatencyPolicy()
           break
         case 'mediaSegment':
           await this.mse?.appendMediaSegment(event.data)
           this.outputBytes += event.data.bytes.byteLength
+          await this.applyLatencyPolicy()
           break
         case 'probeResult':
         case 'videoConfig':
@@ -287,6 +333,75 @@ export class RuntimeWorker {
     }
 
     return true
+  }
+
+  private async applyLatencyPolicy(): Promise<void> {
+    const latencyController = this.latencyController
+    const mse = this.mse
+    if (latencyController === undefined || mse === undefined) {
+      return
+    }
+
+    const loader = this.loader
+    const evaluation = latencyController.evaluate({
+      ranges: mse.bufferedRanges,
+      videoState: this.videoState,
+      loaderPaused: loader?.paused ?? false,
+      nowMs: this.now(),
+    })
+    this.lastLatencyMetrics = evaluation.metrics
+
+    if (evaluation.cleanupBefore !== undefined) {
+      await mse.cleanupBefore(evaluation.cleanupBefore)
+    }
+
+    if (loader !== undefined && evaluation.loaderCommand === 'pause') {
+      loader.pause()
+    } else if (loader !== undefined && evaluation.loaderCommand === 'resume') {
+      loader.resume()
+    }
+
+    if (evaluation.playbackControl !== undefined) {
+      this.post({ type: 'playback-control', action: evaluation.playbackControl })
+    }
+  }
+
+  private startStatsTimer(): void {
+    this.stopStatsTimer()
+    const intervalMs = this.options?.diagnostics.statsIntervalMs
+    if (intervalMs === undefined || intervalMs <= 0) {
+      return
+    }
+
+    this.statsTimer = setInterval(() => {
+      void this.emitStatsTick()
+    }, intervalMs)
+  }
+
+  private stopStatsTimer(): void {
+    if (this.statsTimer === undefined) {
+      return
+    }
+
+    clearInterval(this.statsTimer)
+    this.statsTimer = undefined
+    this.statsTickInFlight = false
+  }
+
+  private async emitStatsTick(): Promise<void> {
+    if (this.statsTickInFlight || this.state !== 'started') {
+      return
+    }
+
+    this.statsTickInFlight = true
+    try {
+      await this.applyLatencyPolicy()
+      this.postStats()
+    } catch (cause) {
+      this.fail('mse', 'RIVMUX_MSE_LATENCY_POLICY_FAILED', 'MSE latency policy failed.', true, cause)
+    } finally {
+      this.statsTickInFlight = false
+    }
   }
 
   private fail(kind: PlayerError['kind'], code: string, message: string, terminal: boolean, cause?: unknown): void {
@@ -315,4 +430,44 @@ function serializeCause(cause: unknown): unknown {
   }
 
   return cause
+}
+
+function createLatencyController(options: NormalizedRivmuxPlayerOptions): LatencyController {
+  return new LatencyController({
+    latency: options.latency,
+    playback: options.playback,
+  })
+}
+
+function mergeOptions(current: NormalizedRivmuxPlayerOptions, updates: Partial<NormalizedRivmuxPlayerOptions>): NormalizedRivmuxPlayerOptions {
+  return {
+    playback: {
+      ...current.playback,
+      ...updates.playback,
+    },
+    latency: {
+      ...current.latency,
+      ...updates.latency,
+    },
+    network: {
+      ...current.network,
+      ...updates.network,
+      headers: {
+        ...current.network.headers,
+        ...updates.network?.headers,
+      },
+      retry: {
+        ...current.network.retry,
+        ...updates.network?.retry,
+      },
+    },
+    runtime: {
+      ...current.runtime,
+      ...updates.runtime,
+    },
+    diagnostics: {
+      ...current.diagnostics,
+      ...updates.diagnostics,
+    },
+  }
 }

@@ -47,8 +47,17 @@ describe('RivmuxPlayer', () => {
     expect(video.autoplay).toBe(true)
 
     await player.start()
-    expect(worker.commands[2]).toStrictEqual({ type: 'start' })
+    expect(worker.commands.map((command) => command.type).slice(0, 4)).toStrictEqual(['init', 'attach-media-source', 'start', 'video-state'])
+    expect(video.play).not.toHaveBeenCalled()
+
+    worker.emit({ type: 'playback-control', action: { type: 'play', reason: 'startup-buffer-ready' } })
+    await flushPromises()
     expect(video.play).toHaveBeenCalledTimes(1)
+    expect(worker.commands).toContainEqual({ type: 'playback-control-result', result: { type: 'play', accepted: true } })
+
+    worker.emit({ type: 'playback-control', action: { type: 'set-playback-rate', playbackRate: 1.05, reason: 'latency-above-target' } })
+    await flushPromises()
+    expect(video.playbackRate).toBe(1.05)
 
     worker.emit({ type: 'media-info', mediaInfo: { container: 'fmp4', videoCodec: 'avc1.42C01E', width: 320, height: 240 } })
     worker.emit({ type: 'stats', stats: { outputBytes: 28904, appendQueueLength: 0 } })
@@ -56,22 +65,23 @@ describe('RivmuxPlayer', () => {
     expect(stats).toHaveBeenCalledWith({ outputBytes: 28904, appendQueueLength: 0 })
 
     const stopPromise = player.stop()
-    expect(worker.commands[3]).toStrictEqual({ type: 'stop' })
+    expect(worker.commands).toContainEqual({ type: 'stop' })
     worker.emit({ type: 'stopped' })
     await stopPromise
     expect(stopped).toHaveBeenCalledTimes(1)
     expect(video.srcObject).toBeNull()
     expect(video.load).toHaveBeenCalledTimes(1)
+    expect(video.playbackRate).toBe(1)
 
     const restartPromise = player.start()
-    expect(worker.commands[4]).toStrictEqual({ type: 'attach-media-source' })
+    expect(worker.commands).toContainEqual({ type: 'attach-media-source' })
     worker.emit({ type: 'media-source-handle', handle: { id: 'restart' } as unknown as MediaSourceHandle })
     await restartPromise
-    expect(worker.commands[5]).toStrictEqual({ type: 'start' })
+    expect(worker.commands.filter((command) => command.type === 'start')).toHaveLength(2)
     expect(video.srcObject).toStrictEqual({ id: 'restart' })
 
     const destroyPromise = player.destroy()
-    expect(worker.commands[6]).toStrictEqual({ type: 'destroy' })
+    expect(worker.commands).toContainEqual({ type: 'destroy' })
     worker.emit({ type: 'destroyed' })
     await destroyPromise
     expect(destroyed).toHaveBeenCalledTimes(1)
@@ -101,7 +111,7 @@ describe('RivmuxPlayer', () => {
 
     await players[0]?.start()
 
-    expect(workers[0]?.commands.map((command) => command.type)).toStrictEqual(['init', 'attach-media-source', 'start'])
+    expect(workers[0]?.commands.map((command) => command.type).slice(0, 4)).toStrictEqual(['init', 'attach-media-source', 'start', 'video-state'])
     expect(workers[1]?.commands.map((command) => command.type)).toStrictEqual(['init', 'attach-media-source'])
   })
 
@@ -163,13 +173,27 @@ class MockWorker implements WorkerLike {
 }
 
 function createMockVideo(): HTMLVideoElement {
-  return {
+  const video = {
     autoplay: false,
     muted: false,
+    currentTime: 0,
+    readyState: 0,
+    playbackRate: 1,
+    paused: true,
     srcObject: null,
-    play: vi.fn(() => Promise.resolve()),
-    pause: vi.fn(),
+    play: vi.fn(() => {
+      video.paused = false
+      return Promise.resolve()
+    }),
+    pause: vi.fn(() => {
+      video.paused = true
+    }),
     removeAttribute: vi.fn(),
     load: vi.fn(),
-  } as unknown as HTMLVideoElement
+  }
+  return video as unknown as HTMLVideoElement
+}
+
+function flushPromises(): Promise<void> {
+  return Promise.resolve()
 }

@@ -53,6 +53,10 @@ describe('RuntimeWorker', () => {
 
     expect(loader.opened).toBe(true)
     expect(loader.closed).toBe(true)
+    expect(port.messages).toContainEqual({
+      type: 'playback-control',
+      action: { type: 'play', reason: 'startup-buffer-ready' },
+    })
     expect(statsMessages).toContainEqual({
       type: 'stats',
       stats: expect.objectContaining({
@@ -106,6 +110,103 @@ describe('RuntimeWorker', () => {
         videoCodec: 'avc1.42E01E',
       },
     })
+  })
+
+  it('measures live latency and cleans old SourceBuffer ranges from video state', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader()
+    const mse = new MockMseController([{ start: 0, end: 6 }])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+      now: () => 1000,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+    await runtime.handleCommand({
+      type: 'video-state',
+      state: { currentTime: 3, readyState: 3, playbackRate: 1, paused: false, droppedFrames: 2 },
+    })
+    await runtime.handleCommand({ type: 'stop' })
+
+    expect(mse.cleanupRequests).toStrictEqual([1.5])
+    expect(port.messages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        currentTime: 3,
+        liveLatency: 3,
+        playbackRate: 1,
+        readyState: 3,
+        droppedFrames: 2,
+      }),
+    })
+  })
+
+  it('pauses and resumes the loader when forward buffer crosses latency bounds', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader()
+    const mse = new MockMseController([{ start: 0, end: 6 }])
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+      now: () => 1000,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 1, readyState: 3, playbackRate: 1, paused: false } })
+    expect(loader.paused).toBe(true)
+
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 5, readyState: 3, playbackRate: 1, paused: false } })
+    await runtime.handleCommand({ type: 'stop' })
+
+    expect(loader.paused).toBe(false)
+    expect(loader.pauseCount).toBe(1)
+    expect(loader.resumeCount).toBe(1)
+    expect(port.messages).toContainEqual({
+      type: 'stats',
+      stats: expect.objectContaining({
+        loaderPaused: true,
+      }),
+    })
+  })
+
+  it('requests latency chasing controls without repeating seek requests inside cooldown', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader()
+    const mse = new MockMseController([{ start: 0, end: 6 }])
+    let now = 1000
+    const runtime = new RuntimeWorker(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+      now: () => now,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+    await runtime.handleCommand({ type: 'playback-control-result', result: { type: 'play', accepted: true } })
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 2, readyState: 3, playbackRate: 1, paused: false } })
+    await runtime.handleCommand({ type: 'playback-control-result', result: { type: 'seek', accepted: true } })
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 2.1, readyState: 3, playbackRate: 1, paused: false } })
+    now = 2200
+    await runtime.handleCommand({ type: 'video-state', state: { currentTime: 4.4, readyState: 3, playbackRate: 1, paused: false } })
+    await runtime.handleCommand({ type: 'stop' })
+
+    expect(port.messages.filter((message) => message.type === 'playback-control')).toStrictEqual([
+      { type: 'playback-control', action: { type: 'play', reason: 'startup-buffer-ready' } },
+      { type: 'playback-control', action: { type: 'seek', targetTime: 4.8, reason: 'latency-max-exceeded' } },
+      { type: 'playback-control', action: { type: 'set-playback-rate', playbackRate: 1.05, reason: 'latency-above-target' } },
+    ])
   })
 
   it('appends transmux core init and media segments for each track through MSE', async () => {
@@ -235,12 +336,25 @@ class MockPort {
 class MockMseController implements RuntimeMseController {
   readonly appendQueueLength = 0
   readonly sourceBufferUpdating = false
-  readonly bufferedStart = 0
-  readonly bufferedEnd = 1
-  readonly bufferedDuration = 1
   readonly initSegments: Array<Extract<CoreEvent, { type: 'initSegment' }>['data']> = []
   readonly mediaSegments: Array<Extract<CoreEvent, { type: 'mediaSegment' }>['data']> = []
+  readonly cleanupRequests: number[] = []
   appendedFixtureCount = 0
+
+  constructor(readonly bufferedRanges = [{ start: 0, end: 1 }]) {}
+
+  get bufferedStart(): number | undefined {
+    return this.bufferedRanges[0]?.start
+  }
+
+  get bufferedEnd(): number | undefined {
+    const range = this.bufferedRanges[this.bufferedRanges.length - 1]
+    return range?.end
+  }
+
+  get bufferedDuration(): number | undefined {
+    return this.bufferedRanges.reduce((total, range) => total + range.end - range.start, 0)
+  }
 
   createMediaSourceHandle(): Promise<MediaSourceHandle> {
     return Promise.resolve({} as MediaSourceHandle)
@@ -261,6 +375,11 @@ class MockMseController implements RuntimeMseController {
     return Promise.resolve()
   }
 
+  cleanupBefore(cutoff: number): Promise<void> {
+    this.cleanupRequests.push(cutoff)
+    return Promise.resolve()
+  }
+
   destroy(): void {}
 }
 
@@ -271,6 +390,9 @@ class MockLoader implements StreamLoader {
   }
   opened = false
   closed = false
+  paused = false
+  pauseCount = 0
+  resumeCount = 0
   private offset = 0
   private resolveDone?: () => void
   private readonly done = new Promise<void>((resolve) => {
@@ -298,6 +420,16 @@ class MockLoader implements StreamLoader {
     return Promise.resolve({ bytes: chunk, receivedAtMs: this.offset })
   }
 
+  pause(): void {
+    this.paused = true
+    this.pauseCount += 1
+  }
+
+  resume(): void {
+    this.paused = false
+    this.resumeCount += 1
+  }
+
   close(): Promise<void> {
     this.closed = true
     this.resolveDone?.()
@@ -315,6 +447,9 @@ class BlockingLoader implements StreamLoader {
     currentNetworkSpeed: 0,
   }
   closed = false
+  paused = false
+  pauseCount = 0
+  resumeCount = 0
   private resolveOpen?: () => void
   private resolveRead?: (value: StreamChunk | null) => void
   private readonly opened = new Promise<void>((resolve) => {
@@ -330,6 +465,17 @@ class BlockingLoader implements StreamLoader {
     return new Promise((resolve) => {
       this.resolveRead = resolve
     })
+  }
+
+  pause(): void {
+    this.paused = true
+    this.pauseCount += 1
+  }
+
+  resume(): void {
+    this.paused = false
+    this.resumeCount += 1
+    this.resolveRead?.(null)
   }
 
   close(): Promise<void> {

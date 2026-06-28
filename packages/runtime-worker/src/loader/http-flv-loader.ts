@@ -27,6 +27,8 @@ export class HttpFlvLoader implements StreamLoader {
   private abortController?: AbortController
   private reader?: ReadableStreamDefaultReader<Uint8Array>
   private state: LoaderState = 'idle'
+  private pausedState = false
+  private resumeWaiters: Array<() => void> = []
   private readonly mutableStats: StreamLoaderStats = {
     bytesReceived: 0,
     currentNetworkSpeed: 0,
@@ -44,6 +46,10 @@ export class HttpFlvLoader implements StreamLoader {
 
   get closed(): boolean {
     return this.state === 'closed'
+  }
+
+  get paused(): boolean {
+    return this.pausedState
   }
 
   get stats(): StreamLoaderStats {
@@ -75,6 +81,12 @@ export class HttpFlvLoader implements StreamLoader {
   }
 
   async read(): Promise<StreamChunk | null> {
+    await this.waitUntilResumed()
+
+    if (this.closed) {
+      return null
+    }
+
     const reader = this.reader
     if (reader === undefined) {
       if (this.closed) {
@@ -105,12 +117,31 @@ export class HttpFlvLoader implements StreamLoader {
     return { bytes, receivedAtMs }
   }
 
+  pause(): void {
+    if (this.closed) {
+      return
+    }
+
+    this.pausedState = true
+  }
+
+  resume(): void {
+    if (!this.pausedState) {
+      return
+    }
+
+    this.pausedState = false
+    this.resolveResumeWaiters()
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return
     }
 
     this.state = 'closed'
+    this.pausedState = false
+    this.resolveResumeWaiters()
     this.abortController?.abort()
 
     const reader = this.reader
@@ -165,6 +196,24 @@ export class HttpFlvLoader implements StreamLoader {
 
     this.reader = response.body.getReader()
     this.state = 'open'
+  }
+
+  private waitUntilResumed(): Promise<void> {
+    if (!this.pausedState || this.closed) {
+      return Promise.resolve()
+    }
+
+    return new Promise((resolve) => {
+      this.resumeWaiters.push(resolve)
+    })
+  }
+
+  private resolveResumeWaiters(): void {
+    const waiters = this.resumeWaiters
+    this.resumeWaiters = []
+    for (const resolve of waiters) {
+      resolve()
+    }
   }
 }
 

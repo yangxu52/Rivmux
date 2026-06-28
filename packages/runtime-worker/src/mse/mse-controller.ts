@@ -2,12 +2,14 @@ import { M1_VIDEO_MIME, assertMseSupport, createMp4AudioMime, createMp4VideoMime
 import { SourceBufferQueue } from './source-buffer-queue'
 
 import type { M1StaticFmp4Fixture } from '../fixtures/m1-static-fmp4'
+import type { BufferedRange } from '../latency/buffer-ranges'
 import type { CoreInitSegment, CoreMediaSegment } from '../wasm/rivmux-transmux-wasm'
 
 export class MseController {
   private mediaSource?: MediaSource
   private readonly sourceBuffers = new Map<CoreInitSegment['track'], SourceBuffer>()
   private readonly queues = new Map<CoreInitSegment['track'], SourceBufferQueue>()
+  private lastCleanupBefore = 0
 
   get appendQueueLength(): number {
     return Array.from(this.queues.values()).reduce((total, queue) => total + queue.length, 0)
@@ -27,6 +29,10 @@ export class MseController {
 
   get bufferedDuration(): number | undefined {
     return this.primaryQueue?.bufferedDuration
+  }
+
+  get bufferedRanges(): BufferedRange[] {
+    return this.primaryQueue?.bufferedRanges ?? []
   }
 
   async createMediaSourceHandle(): Promise<MediaSourceHandle> {
@@ -81,10 +87,20 @@ export class MseController {
     }
   }
 
+  async cleanupBefore(cutoff: number): Promise<void> {
+    if (!Number.isFinite(cutoff) || cutoff <= 0 || cutoff <= this.lastCleanupBefore + CLEANUP_STEP_SECONDS) {
+      return
+    }
+
+    this.lastCleanupBefore = cutoff
+    await Promise.all(Array.from(this.queues.values(), (queue) => queue.cleanupBefore(cutoff)))
+  }
+
   reset(): void {
     for (const queue of this.queues.values()) {
       queue.reset()
     }
+    this.lastCleanupBefore = 0
   }
 
   destroy(): void {
@@ -176,3 +192,5 @@ function toAppendBuffer(bytes: Uint8Array): ArrayBuffer {
 function createMp4Mime(track: CoreInitSegment['track'], codec: string): string {
   return track === 'audio' ? createMp4AudioMime(codec) : createMp4VideoMime(codec)
 }
+
+const CLEANUP_STEP_SECONDS = 0.25

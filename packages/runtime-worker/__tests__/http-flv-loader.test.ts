@@ -60,6 +60,45 @@ describe('HttpFlvLoader', () => {
     expect(reader.releaseLock).toHaveBeenCalledTimes(1)
   })
 
+  it('defers reads while paused and resumes without polling', async () => {
+    const reader = new MockReader([new Uint8Array([9])])
+    const loader = new HttpFlvLoader({
+      url: 'https://example.test/live.flv',
+      network: createNetworkOptions(),
+      fetch: () => Promise.resolve(createResponse({ body: new MockReadableStream(reader) })),
+      now: () => 1,
+    })
+
+    await loader.open()
+    loader.pause()
+    const readPromise = loader.read()
+    await Promise.resolve()
+    expect(reader.read).not.toHaveBeenCalled()
+
+    loader.resume()
+    await expect(readPromise).resolves.toMatchObject({ bytes: new Uint8Array([9]) })
+    expect(reader.read).toHaveBeenCalledTimes(1)
+  })
+
+  it('unblocks a paused read when closed', async () => {
+    const reader = new MockReader([new Uint8Array([1])])
+    const loader = new HttpFlvLoader({
+      url: 'https://example.test/live.flv',
+      network: createNetworkOptions(),
+      fetch: () => Promise.resolve(createResponse({ body: new MockReadableStream(reader) })),
+      now: () => 1,
+    })
+
+    await loader.open()
+    loader.pause()
+    const readPromise = loader.read()
+    await Promise.resolve()
+    await loader.close()
+
+    await expect(readPromise).resolves.toBeNull()
+    expect(reader.read).not.toHaveBeenCalled()
+  })
+
   it('rejects non-ok HTTP status with a structured loader error', async () => {
     const loader = new HttpFlvLoader({
       url: 'https://example.test/live.flv',
@@ -94,16 +133,15 @@ class MockReader implements ReadableStreamDefaultReader<Uint8Array> {
   readonly closed: Promise<undefined> = Promise.resolve(undefined)
   readonly cancel = vi.fn(() => Promise.resolve())
   readonly releaseLock = vi.fn()
-  private offset = 0
-
-  constructor(private readonly chunks: Uint8Array[]) {}
-
-  read(): Promise<ReadableStreamReadResult<Uint8Array>> {
+  readonly read = vi.fn((): Promise<ReadableStreamReadResult<Uint8Array>> => {
     const chunk = this.chunks[this.offset]
     this.offset += 1
 
     return Promise.resolve(chunk === undefined ? { done: true, value: undefined } : { done: false, value: chunk })
-  }
+  })
+  private offset = 0
+
+  constructor(private readonly chunks: Uint8Array[]) {}
 }
 
 class MockReadableStream implements Pick<ReadableStream<Uint8Array>, 'cancel' | 'getReader'> {

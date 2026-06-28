@@ -4,7 +4,15 @@ import { detectMainThreadRuntime } from './feature-detect'
 import { normalizePlayerOptions } from './options'
 import { createRuntimeWorker, WorkerClient } from '@rivmux/runtime-worker'
 
-import type { NormalizedRivmuxPlayerOptions, PlayerError, PlayerEventListener, PlayerEventType, RivmuxPlayerOptions, WorkerMessage } from 'rivmux-protocol'
+import type {
+  NormalizedRivmuxPlayerOptions,
+  PlaybackControlAction,
+  PlayerError,
+  PlayerEventListener,
+  PlayerEventType,
+  RivmuxPlayerOptions,
+  WorkerMessage,
+} from 'rivmux-protocol'
 import type { RuntimeWorkerFactory } from '@rivmux/runtime-worker'
 
 type PlayerState = 'idle' | 'attached' | 'started' | 'stopped' | 'destroyed'
@@ -24,6 +32,7 @@ export class RivmuxPlayer {
   private readonly detectRuntime: () => PlayerError | undefined
   private workerClient?: WorkerClient
   private video?: HTMLVideoElement
+  private videoStateTimer?: ReturnType<typeof setInterval>
   private state: PlayerState = 'idle'
 
   constructor(url: string, options?: RivmuxPlayerOptions, internals: RivmuxPlayerInternals = {}) {
@@ -72,10 +81,7 @@ export class RivmuxPlayer {
 
     this.workerClient.post({ type: 'start' })
     this.state = 'started'
-
-    if (this.options.playback.autoPlay) {
-      await this.video.play()
-    }
+    this.startVideoStateReporting()
   }
 
   async stop(): Promise<void> {
@@ -89,6 +95,7 @@ export class RivmuxPlayer {
       return
     }
 
+    this.stopVideoStateReporting()
     await this.workerClient.waitForStopped({ type: 'stop' })
     this.detachVideoSource()
     this.state = 'stopped'
@@ -101,6 +108,7 @@ export class RivmuxPlayer {
 
     const workerClient = this.workerClient
     this.workerClient = undefined
+    this.stopVideoStateReporting()
 
     if (workerClient !== undefined) {
       try {
@@ -166,6 +174,9 @@ export class RivmuxPlayer {
       case 'error':
         this.events.emit('error', message.error)
         return
+      case 'playback-control':
+        void this.applyPlaybackControl(message.action)
+        return
       case 'stopped':
         this.events.emit('stopped', undefined)
         return
@@ -195,12 +206,86 @@ export class RivmuxPlayer {
     video.autoplay = this.options.playback.autoPlay
   }
 
+  private startVideoStateReporting(): void {
+    this.stopVideoStateReporting()
+    this.postVideoState()
+
+    const intervalMs = Math.max(100, Math.min(this.options.diagnostics.statsIntervalMs, 250))
+    this.videoStateTimer = setInterval(() => {
+      this.postVideoState()
+    }, intervalMs)
+  }
+
+  private stopVideoStateReporting(): void {
+    if (this.videoStateTimer === undefined) {
+      return
+    }
+
+    clearInterval(this.videoStateTimer)
+    this.videoStateTimer = undefined
+  }
+
+  private postVideoState(): void {
+    const video = this.video
+    const workerClient = this.workerClient
+    if (video === undefined || workerClient === undefined || this.state !== 'started') {
+      return
+    }
+
+    const droppedFrames = getDroppedFrames(video)
+    workerClient.post({
+      type: 'video-state',
+      state: {
+        currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+        readyState: video.readyState,
+        playbackRate: video.playbackRate,
+        paused: video.paused,
+        ...(droppedFrames === undefined ? {} : { droppedFrames }),
+      },
+    })
+  }
+
+  private async applyPlaybackControl(action: PlaybackControlAction): Promise<void> {
+    const video = this.video
+    const workerClient = this.workerClient
+    if (video === undefined || workerClient === undefined || this.state !== 'started') {
+      return
+    }
+
+    try {
+      switch (action.type) {
+        case 'play':
+          await video.play()
+          break
+        case 'set-playback-rate':
+          video.playbackRate = action.playbackRate
+          break
+        case 'seek':
+          video.currentTime = action.targetTime
+          break
+      }
+
+      workerClient.post({ type: 'playback-control-result', result: { type: action.type, accepted: true } })
+      this.postVideoState()
+    } catch (cause) {
+      workerClient.post({
+        type: 'playback-control-result',
+        result: {
+          type: action.type,
+          accepted: false,
+          message: cause instanceof Error ? cause.message : String(cause),
+        },
+      })
+    }
+  }
+
   private detachVideoSource(): void {
     if (this.video === undefined) {
       return
     }
 
     this.video.pause()
+    this.video.playbackRate = 1
     this.video.removeAttribute('src')
     this.video.srcObject = null
     this.video.load()
@@ -218,4 +303,14 @@ export class RivmuxPlayer {
 function createPlayerId(): string {
   const random = globalThis.crypto?.randomUUID?.()
   return random ?? `rivmux-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function getDroppedFrames(video: HTMLVideoElement): number | undefined {
+  const quality = video.getVideoPlaybackQuality?.()
+  if (quality !== undefined && Number.isFinite(quality.droppedVideoFrames)) {
+    return quality.droppedVideoFrames
+  }
+
+  const webkitDroppedFrameCount = (video as HTMLVideoElement & { webkitDroppedFrameCount?: number }).webkitDroppedFrameCount
+  return Number.isFinite(webkitDroppedFrameCount) ? webkitDroppedFrameCount : undefined
 }

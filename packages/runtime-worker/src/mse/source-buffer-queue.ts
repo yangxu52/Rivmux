@@ -1,7 +1,13 @@
+import { getBufferedDuration, getBufferedStart, getLiveEdge, normalizeBufferedRanges } from '../latency/buffer-ranges'
+
+import type { BufferedRange } from '../latency/buffer-ranges'
+
+type SourceBufferOperation = { type: 'append'; data: ArrayBuffer } | { type: 'remove'; start: number; end: number }
+
 export class SourceBufferQueue {
   private readonly sourceBuffer: SourceBuffer
-  private readonly queue: ArrayBuffer[] = []
-  private pendingAppend?: Promise<void>
+  private readonly queue: SourceBufferOperation[] = []
+  private pendingDrain?: Promise<void>
   private destroyed = false
 
   constructor(sourceBuffer: SourceBuffer) {
@@ -16,19 +22,20 @@ export class SourceBufferQueue {
     return this.sourceBuffer.updating
   }
 
+  get bufferedRanges(): BufferedRange[] {
+    return normalizeBufferedRanges(this.sourceBuffer.buffered)
+  }
+
   get bufferedStart(): number | undefined {
-    return this.sourceBuffer.buffered.length === 0 ? undefined : this.sourceBuffer.buffered.start(0)
+    return getBufferedStart(this.bufferedRanges)
   }
 
   get bufferedEnd(): number | undefined {
-    const { buffered } = this.sourceBuffer
-    return buffered.length === 0 ? undefined : buffered.end(buffered.length - 1)
+    return getLiveEdge(this.bufferedRanges)
   }
 
   get bufferedDuration(): number | undefined {
-    const start = this.bufferedStart
-    const end = this.bufferedEnd
-    return start === undefined || end === undefined ? undefined : Math.max(0, end - start)
+    return getBufferedDuration(this.bufferedRanges)
   }
 
   append(data: ArrayBuffer): Promise<void> {
@@ -36,9 +43,24 @@ export class SourceBufferQueue {
       return Promise.reject(new Error('SourceBufferQueue has been destroyed.'))
     }
 
-    this.queue.push(data)
-    this.pendingAppend ??= this.drain()
-    return this.pendingAppend
+    this.queue.push({ type: 'append', data })
+    this.pendingDrain ??= this.drain()
+    return this.pendingDrain
+  }
+
+  cleanupBefore(cutoff: number): Promise<void> {
+    if (this.destroyed) {
+      return Promise.reject(new Error('SourceBufferQueue has been destroyed.'))
+    }
+
+    const removals = this.createCleanupOperations(cutoff)
+    if (removals.length === 0) {
+      return this.pendingDrain ?? Promise.resolve()
+    }
+
+    this.queue.unshift(...removals)
+    this.pendingDrain ??= this.drain()
+    return this.pendingDrain
   }
 
   reset(): void {
@@ -54,17 +76,29 @@ export class SourceBufferQueue {
     try {
       while (this.queue.length > 0 && !this.destroyed) {
         await this.waitForIdle()
-        const data = this.queue.shift()
+        const operation = this.queue.shift()
 
-        if (data !== undefined) {
-          this.sourceBuffer.appendBuffer(data)
+        if (operation?.type === 'append') {
+          this.sourceBuffer.appendBuffer(operation.data)
+        } else if (operation?.type === 'remove') {
+          this.sourceBuffer.remove(operation.start, operation.end)
         }
       }
 
       await this.waitForIdle()
     } finally {
-      this.pendingAppend = undefined
+      this.pendingDrain = undefined
     }
+  }
+
+  private createCleanupOperations(cutoff: number): SourceBufferOperation[] {
+    if (!Number.isFinite(cutoff) || cutoff <= 0) {
+      return []
+    }
+
+    return this.bufferedRanges
+      .map((range) => ({ type: 'remove' as const, start: range.start, end: Math.min(range.end, cutoff) }))
+      .filter((operation) => operation.end > operation.start)
   }
 
   private waitForIdle(): Promise<void> {
