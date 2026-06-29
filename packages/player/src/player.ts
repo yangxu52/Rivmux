@@ -23,8 +23,17 @@ export type RivmuxPlayerInternals = {
   idFactory?: () => string
 }
 
+/**
+ * Public browser player facade for one HTTP-FLV stream.
+ *
+ * Create one instance per stream URL, call `attach(video)` first, then
+ * `start()`. Call `destroy()` when the instance is no longer needed.
+ */
 export class RivmuxPlayer {
+  /** Original stream URL passed to the constructor. */
   readonly url: string
+
+  /** Fully normalized options with defaults applied. */
   readonly options: NormalizedRivmuxPlayerOptions
   private readonly id: string
   private readonly events = new PlayerEventEmitter()
@@ -35,6 +44,11 @@ export class RivmuxPlayer {
   private videoStateTimer?: ReturnType<typeof setInterval>
   private state: PlayerState = 'idle'
 
+  /**
+   * Creates a player instance for one stream URL.
+   *
+   * The instance does not start network loading until `start()` is called.
+   */
   constructor(url: string, options?: RivmuxPlayerOptions, internals: RivmuxPlayerInternals = {}) {
     this.url = url
     this.options = normalizePlayerOptions(options)
@@ -43,6 +57,11 @@ export class RivmuxPlayer {
     this.detectRuntime = internals.detectRuntime ?? detectMainThreadRuntime
   }
 
+  /**
+   * Attaches this player to a video element and prepares the worker/MSE pipe.
+   *
+   * Await this method before calling `start()`.
+   */
   async attach(video: HTMLVideoElement): Promise<void> {
     this.assertNotDestroyed('attach')
 
@@ -63,6 +82,11 @@ export class RivmuxPlayer {
     this.state = 'attached'
   }
 
+  /**
+   * Starts loading, transmuxing, buffering, and playback control.
+   *
+   * Requires a successful `attach(video)` call first.
+   */
   async start(): Promise<void> {
     this.assertNotDestroyed('start')
 
@@ -84,6 +108,12 @@ export class RivmuxPlayer {
     this.startVideoStateReporting()
   }
 
+  /**
+   * Stops loading and detaches the current media source.
+   *
+   * The instance remains reusable; call `start()` again to restart the same
+   * stream after the player has stopped.
+   */
   async stop(): Promise<void> {
     if (this.state === 'destroyed') {
       return
@@ -101,6 +131,12 @@ export class RivmuxPlayer {
     this.state = 'stopped'
   }
 
+  /**
+   * Releases worker resources, timers, listeners, and the attached video source.
+   *
+   * The instance is terminal after destroy and cannot be attached or started
+   * again.
+   */
   async destroy(): Promise<void> {
     if (this.state === 'destroyed') {
       return
@@ -129,10 +165,12 @@ export class RivmuxPlayer {
     this.events.clear()
   }
 
+  /** Registers an event listener for a typed player event. */
   on<T extends PlayerEventType>(type: T, listener: PlayerEventListener<T>): void {
     this.events.on(type, listener)
   }
 
+  /** Removes a previously registered event listener. */
   off<T extends PlayerEventType>(type: T, listener: PlayerEventListener<T>): void {
     this.events.off(type, listener)
   }
