@@ -46,9 +46,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install chromium
-
       - name: Run format check
         run: pnpm run format:check
 
@@ -62,7 +59,7 @@ jobs:
         run: pnpm run clippy
 
       - name: Run test
-        run: pnpm run test
+        run: pnpm run test:ci
 
       - name: Run build
         run: pnpm run build

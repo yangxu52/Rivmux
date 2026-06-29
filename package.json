@@ -16,6 +16,7 @@
     "test:packages": "pnpm -r --filter './packages/*' run test",
     "test:workspace": "pnpm run build && vitest run --config vitest.config.ts",
     "test:crates": "cargo test --workspace",
+    "test:ci": "pnpm run test:packages && pnpm run test:crates",
     "build:wasm": "pnpm --filter @rivmux/transmux-core run build",
     "build:wasm:player": "pnpm run build:wasm",
     "build:wasm:test": "pnpm run build:wasm",

@@ -1,15 +1,15 @@
-name: Release Package
+name: Release
 
 on:
   push:
-    tags: ['*@*.*.*']
+    tags: ['v*.*.*']
 
 permissions:
   id-token: write
   contents: write
 
 jobs:
-  release-package:
+  release:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,57 +28,91 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: 'pnpm'
 
+      - name: Setup rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Resolve package from tag
-        id: package
+      - name: Validate release version
+        id: release
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          package_dir="${tag%@*}"
-          version="${tag##*@}"
-          package_json="packages/${package_dir}/package.json"
+          version="${tag#v}"
 
-          if [[ "${package_dir}" == "${tag}" || -z "${package_dir}" || -z "${version}" ]]; then
-            echo "::error::Tag must use the format <package-directory>@<version>, for example player@0.1.0."
+          if [[ "${version}" == "${tag}" || -z "${version}" ]]; then
+            echo "::error::Tag must use the format v<version>, for example v0.1.0."
             exit 1
           fi
 
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Invalid version in tag '${tag}'."
             exit 1
           fi
 
-          if [[ ! -f "${package_json}" ]]; then
-            echo "::error::Package directory '${package_dir}' does not exist under packages/."
-            exit 1
+          release_packages=(
+            "packages/protocol/package.json"
+            "packages/runtime-worker/package.json"
+            "packages/player/package.json"
+          )
+
+          for package_json in "${release_packages[@]}"; do
+            package_name="$(node -p "require('./${package_json}').name")"
+            package_version="$(node -p "require('./${package_json}').version")"
+
+            if [[ "${package_version}" != "${version}" ]]; then
+              echo "::error::Tag version '${version}' does not match ${package_name} version '${package_version}' in ${package_json}."
+              exit 1
+            fi
+          done
+
+          if [[ "${tag}" == *alpha* || "${tag}" == *beta* || "${tag}" == *rc* ]]; then
+            echo "prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
 
-          package_name="$(node -p "require('./${package_json}').name")"
-          package_version="$(node -p "require('./${package_json}').version")"
-
-          if [[ "${package_version}" != "${version}" ]]; then
-            echo "::error::Tag version '${version}' does not match ${package_json} version '${package_version}'."
-            exit 1
-          fi
-
-          echo "dir=${package_dir}" >> "${GITHUB_OUTPUT}"
-          echo "name=${package_name}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build package
-        run: pnpm --filter ./packages/${{ steps.package.outputs.dir }}... run build
+      - name: Run format check
+        run: pnpm run format:check
 
-      - name: Publish package
-        run: pnpm --filter ./packages/${{ steps.package.outputs.dir }} publish --access public --no-git-checks
+      - name: Run lint check
+        run: pnpm run lint:check
+
+      - name: Run Rust clippy
+        run: pnpm run clippy
+
+      - name: Run type check
+        run: pnpm run typecheck
+
+      - name: Run test
+        run: pnpm run test:ci
+
+      - name: Run build
+        run: pnpm run build
+
+      - name: Publish packages
+        run: |
+          pnpm --filter @rivmux/protocol publish --access public --no-git-checks
+          pnpm --filter @rivmux/runtime-worker publish --access public --no-git-checks
+          pnpm --filter rivmux publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create release for tag
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ steps.package.outputs.name }} v${{ steps.package.outputs.version }}
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          name: Rivmux v${{ steps.release.outputs.version }}
+          prerelease: ${{ steps.release.outputs.prerelease }}
           body: |
-            Please refer to [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/packages/${{ steps.package.outputs.dir }}/CHANGELOG.md) for details.
+            Please refer to [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for details.
