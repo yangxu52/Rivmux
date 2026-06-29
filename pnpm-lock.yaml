@@ -32,6 +32,9 @@ importers:
       '@eslint/js':
         specifier: ^9.39.4
         version: 9.39.4
+      '@rivmux/transmux-core':
+        specifier: workspace:*
+        version: link:crates/transmux-core
       '@vitest/browser-playwright':
         specifier: 'catalog:'
         version: 4.1.9(playwright@1.59.1)(vite@8.0.16(@types/node@26.0.0)(jiti@2.6.1)(yaml@2.9.0))(vitest@4.1.9)
@@ -86,12 +89,12 @@ importers:
 
   packages/player:
     dependencies:
-      '@rivmux/runtime-worker':
-        specifier: workspace:*
-        version: link:../runtime-worker
       '@rivmux/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@rivmux/runtime-worker':
+        specifier: workspace:*
+        version: link:../runtime-worker
     devDependencies:
       tsdown:
         specifier: 'catalog:'
@@ -105,9 +108,6 @@ importers:
 
   packages/protocol:
     devDependencies:
-      tsdown:
-        specifier: 'catalog:'
-        version: 0.22.3(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -117,9 +117,6 @@ importers:
 
   packages/runtime-worker:
     dependencies:
-      '@rivmux/transmux-core':
-        specifier: workspace:*
-        version: link:../../crates/transmux-core
       '@rivmux/protocol':
         specifier: workspace:*
         version: link:../protocol
