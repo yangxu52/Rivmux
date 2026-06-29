@@ -1,0 +1,21 @@
+{
+  "name": "rivmux-playground",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tsc": "vue-tsc -b",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "rivmux": "workspace:*",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "catalog:",
+    "vite": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}
