@@ -1,6 +1,6 @@
 {
   "name": "rivmux",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Public player package for Rivmux.",
   "license": "Apache-2.0",
   "type": "module",
