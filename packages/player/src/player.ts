@@ -12,7 +12,7 @@ import type {
   PlayerEventType,
   RivmuxPlayerOptions,
   WorkerMessage,
-} from 'rivmux-protocol'
+} from '@rivmux/protocol'
 import type { RuntimeWorkerFactory } from '@rivmux/runtime-worker'
 
 type PlayerState = 'idle' | 'attached' | 'started' | 'stopped' | 'destroyed'

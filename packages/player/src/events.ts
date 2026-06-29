@@ -1,4 +1,4 @@
-import type { PlayerEventListener, PlayerEventMap, PlayerEventType } from 'rivmux-protocol'
+import type { PlayerEventListener, PlayerEventMap, PlayerEventType } from '@rivmux/protocol'
 
 export class PlayerEventEmitter {
   private readonly listeners = new Map<PlayerEventType, Set<PlayerEventListener<PlayerEventType>>>()

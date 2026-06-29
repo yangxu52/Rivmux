@@ -1,4 +1,4 @@
-import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerCommand, WorkerMessage } from 'rivmux-protocol'
+import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 
 export type WorkerLike = Pick<Worker, 'addEventListener' | 'postMessage' | 'removeEventListener' | 'terminate'>
 

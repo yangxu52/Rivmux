@@ -1,5 +1,5 @@
 {
-  "name": "rivmux-player",
+  "name": "rivmux",
   "version": "0.0.1",
   "description": "Public player package for Rivmux.",
   "license": "Apache-2.0",
@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@rivmux/runtime-worker": "workspace:*",
-    "rivmux-protocol": "workspace:*"
+    "@rivmux/protocol": "workspace:*"
   },
   "devDependencies": {
     "tsdown": "catalog:",

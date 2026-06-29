@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { HttpFlvLoader, HttpFlvLoaderError } from '../src/loader/http-flv-loader'
 
-import type { NormalizedNetworkOptions } from 'rivmux-protocol'
+import type { NormalizedNetworkOptions } from '@rivmux/protocol'
 
 describe('HttpFlvLoader', () => {
   it('opens a fetch stream and reports read stats', async () => {

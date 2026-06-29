@@ -1,6 +1,6 @@
 import { getBufferedDuration, getBufferedStart, getForwardBuffer, getLiveEdge } from './buffer-ranges'
 
-import type { NormalizedPlaybackOptions, NormalizedLatencyOptions, PlaybackControlAction, PlaybackControlResult, VideoElementState } from 'rivmux-protocol'
+import type { NormalizedPlaybackOptions, NormalizedLatencyOptions, PlaybackControlAction, PlaybackControlResult, VideoElementState } from '@rivmux/protocol'
 import type { BufferedRange } from './buffer-ranges'
 
 export type LatencyMetrics = {

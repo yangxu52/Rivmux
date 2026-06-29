@@ -1,5 +1,5 @@
 {
-  "name": "rivmux-protocol",
+  "name": "@rivmux/protocol",
   "version": "0.0.1",
   "description": "Protocol TypeScript contracts for Rivmux packages.",
   "license": "Apache-2.0",

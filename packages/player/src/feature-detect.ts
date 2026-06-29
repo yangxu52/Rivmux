@@ -1,6 +1,6 @@
 import { createPlayerError } from './errors'
 
-import type { PlayerError } from 'rivmux-protocol'
+import type { PlayerError } from '@rivmux/protocol'
 
 export const M1_VIDEO_MIME = 'video/mp4; codecs="avc1.42C01E"'
 

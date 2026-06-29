@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { RivmuxPlayer } from '../src/index'
 
-import type { WorkerMessage } from 'rivmux-protocol'
+import type { WorkerMessage } from '@rivmux/protocol'
 import type { WorkerLike } from '../src/worker-client'
 
 describe('RivmuxPlayer', () => {

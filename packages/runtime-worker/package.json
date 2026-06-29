@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@rivmux/transmux-core": "workspace:*",
-    "rivmux-protocol": "workspace:*"
+    "@rivmux/protocol": "workspace:*"
   },
   "devDependencies": {
     "rolldown-plugin-wasm": "^0.3.2",

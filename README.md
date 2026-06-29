@@ -6,11 +6,11 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 
 ## Packages
 
-| 包名                    | 目录                                                   | 说明                                   |
-| ----------------------- | ------------------------------------------------------ | -------------------------------------- |
-| `rivmux-player`         | [`packages/player`](./packages/player)                 | Public browser player facade.          |
-| `rivmux-runtime-worker` | [`packages/runtime-worker`](./packages/runtime-worker) | Dedicated Worker runtime package.      |
-| `rivmux-shared`         | [`packages/shared`](./packages/shared)                 | Side-effect-free TypeScript contracts. |
+| 包名                     | 目录                                                   | 说明                                   |
+| ------------------------ | ------------------------------------------------------ | -------------------------------------- |
+| `rivmux`                 | [`packages/player`](./packages/player)                 | Public browser player facade.          |
+| `@rivmux/runtime-worker` | [`packages/runtime-worker`](./packages/runtime-worker) | Dedicated Worker runtime package.      |
+| `@rivmux/protocol`       | [`packages/protocol`](./packages/protocol)             | Side-effect-free TypeScript contracts. |
 
 ## Crates
 

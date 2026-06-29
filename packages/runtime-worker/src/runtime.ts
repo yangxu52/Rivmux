@@ -8,7 +8,7 @@ import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPl
 import type { BufferedRange } from './latency/buffer-ranges'
 import type { LatencyMetrics } from './latency/latency-controller'
 import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader/loader'
-import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, WorkerCommand, WorkerMessage } from 'rivmux-protocol'
+import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 import type { CoreEvent, TransmuxCoreHost } from './wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'

@@ -1,6 +1,6 @@
 import { RuntimeWorker } from './runtime'
 
-import type { WorkerCommand, WorkerMessage } from 'rivmux-protocol'
+import type { WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 
 export { RuntimeWorker } from './runtime'
 export { M1_VIDEO_MIME, createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'

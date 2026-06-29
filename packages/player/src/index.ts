@@ -18,4 +18,4 @@ export type {
   PlayerWarning,
   RivmuxPlayerOptions,
   RuntimeOptions,
-} from 'rivmux-protocol'
+} from '@rivmux/protocol'

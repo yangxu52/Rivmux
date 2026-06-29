@@ -1,4 +1,4 @@
-import type { NormalizedNetworkOptions } from 'rivmux-protocol'
+import type { NormalizedNetworkOptions } from '@rivmux/protocol'
 
 export type StreamChunk = {
   bytes: Uint8Array

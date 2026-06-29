@@ -1,4 +1,4 @@
-import type { NormalizedRivmuxPlayerOptions, RivmuxPlayerOptions } from 'rivmux-protocol'
+import type { NormalizedRivmuxPlayerOptions, RivmuxPlayerOptions } from '@rivmux/protocol'
 
 export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   playback: {

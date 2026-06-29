@@ -1,4 +1,4 @@
-import type { MediaInfo, PlayerError, PlayerWarning } from 'rivmux-protocol'
+import type { MediaInfo, PlayerError, PlayerWarning } from '@rivmux/protocol'
 
 export type CoreErrorCode =
   | 'unsupportedContainer'

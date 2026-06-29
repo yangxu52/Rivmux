@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { HttpFlvLoaderError } from '../src/loader/http-flv-loader'
 import { RuntimeWorker } from '../src/runtime'
 
-import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from 'rivmux-protocol'
+import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from '@rivmux/protocol'
 import type { StreamChunk, StreamLoader, StreamLoaderStats } from '../src/loader/loader'
 import type { RuntimeMseController } from '../src/runtime'
 import type { CoreEvent, TransmuxCoreHost } from '../src/wasm/rivmux-transmux-wasm'

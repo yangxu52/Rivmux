@@ -89,7 +89,7 @@ importers:
       '@rivmux/runtime-worker':
         specifier: workspace:*
         version: link:../runtime-worker
-      rivmux-protocol:
+      '@rivmux/protocol':
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
@@ -120,7 +120,7 @@ importers:
       '@rivmux/transmux-core':
         specifier: workspace:*
         version: link:../../crates/transmux-core
-      rivmux-protocol:
+      '@rivmux/protocol':
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
