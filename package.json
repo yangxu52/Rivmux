@@ -1,7 +1,7 @@
 {
   "name": "rivmux-workspace",
   "description": "Rivmux is a modern browser video player solution for low-latency FLV and MPEG-TS streams.",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -28,6 +28,7 @@
     "format": "pnpm run format:write",
     "format:check": "prettier --check . && cargo fmt --all --check",
     "format:write": "prettier --write . && cargo fmt --all",
+    "release": "commit-and-tag-version && cargo update --offline",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -36,7 +37,7 @@
     "@eslint/js": "^9.39.4",
     "@rivmux/transmux-core": "workspace:*",
     "@vitest/browser-playwright": "catalog:",
-    "conventional-changelog": "^7.2.0",
+    "commit-and-tag-version": "^12.7.3",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
