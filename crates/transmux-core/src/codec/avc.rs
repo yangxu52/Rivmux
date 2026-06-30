@@ -13,7 +13,9 @@ pub struct VideoConfig {
     pub avcc: Vec<u8>,
 }
 
-pub fn parse_avc_decoder_configuration_record(data: &[u8]) -> Result<VideoConfig, CoreError> {
+pub(crate) fn parse_avc_decoder_configuration_record(
+    data: &[u8],
+) -> Result<VideoConfig, CoreError> {
     if data.len() < 7 {
         return Err(CoreError::new(
             CoreErrorCode::InvalidCodecConfig,

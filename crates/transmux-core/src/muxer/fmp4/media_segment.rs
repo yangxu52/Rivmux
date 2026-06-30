@@ -6,7 +6,7 @@ use crate::sample::{AudioSample, VideoSample};
 const VIDEO_TRACK_ID: u32 = 1;
 const AUDIO_TRACK_ID: u32 = 2;
 
-pub fn build_video_media_segment(sequence_number: u32, sample: &VideoSample) -> Vec<u8> {
+pub(super) fn build_video_media_segment(sequence_number: u32, sample: &VideoSample) -> Vec<u8> {
     let mut moof_box = video_moof(sequence_number, sample, 0);
     let data_offset = (moof_box.len() + 8) as i32;
     moof_box = video_moof(sequence_number, sample, data_offset);
@@ -14,7 +14,7 @@ pub fn build_video_media_segment(sequence_number: u32, sample: &VideoSample) -> 
     concat_box(vec![moof_box, mdat(&sample.data)])
 }
 
-pub fn build_audio_media_segment(sequence_number: u32, sample: &AudioSample) -> Vec<u8> {
+pub(super) fn build_audio_media_segment(sequence_number: u32, sample: &AudioSample) -> Vec<u8> {
     let mut moof_box = audio_moof(sequence_number, sample, 0);
     let data_offset = (moof_box.len() + 8) as i32;
     moof_box = audio_moof(sequence_number, sample, data_offset);
@@ -107,15 +107,15 @@ fn mdat(data: &[u8]) -> Vec<u8> {
     write_box(b"mdat", data.to_vec())
 }
 
-pub fn sample_duration(sample: &VideoSample) -> u32 {
+pub(super) fn sample_duration(sample: &VideoSample) -> u32 {
     sample.timing.duration_ms.unwrap_or(40).max(1) as u32
 }
 
-pub fn audio_sample_duration(sample: &AudioSample) -> u32 {
+pub(super) fn audio_sample_duration(sample: &AudioSample) -> u32 {
     sample.sample_count.max(1)
 }
 
-pub fn audio_sample_duration_ms(sample: &AudioSample) -> i64 {
+pub(super) fn audio_sample_duration_ms(sample: &AudioSample) -> i64 {
     let sample_rate = i64::from(sample.sample_rate.max(1));
     ((i64::from(audio_sample_duration(sample)) * 1000) + (sample_rate / 2)) / sample_rate
 }

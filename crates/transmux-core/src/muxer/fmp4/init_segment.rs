@@ -9,23 +9,26 @@ const AUDIO_TRACK_ID: u32 = 2;
 const VIDEO_TIMESCALE: u32 = 1000;
 const AUDIO_SAMPLE_SIZE: u16 = 16;
 
-pub fn video_timescale() -> u32 {
+pub(super) fn video_timescale() -> u32 {
     VIDEO_TIMESCALE
 }
 
-pub fn build_video_init_segment(config: &VideoConfig) -> Vec<u8> {
+pub(super) fn build_video_init_segment(config: &VideoConfig) -> Vec<u8> {
     concat_box(vec![ftyp(&[b"avc1"]), video_moov(config)])
 }
 
-pub fn audio_timescale(config: &AudioConfig) -> u32 {
+pub(super) fn audio_timescale(config: &AudioConfig) -> u32 {
     config.sample_rate
 }
 
-pub fn build_audio_init_segment(config: &AudioConfig) -> Vec<u8> {
+pub(super) fn build_audio_init_segment(config: &AudioConfig) -> Vec<u8> {
     concat_box(vec![ftyp(&[b"mp4a"]), audio_moov(config)])
 }
 
-pub fn build_muxed_init_segment(video_config: &VideoConfig, audio_config: &AudioConfig) -> Vec<u8> {
+pub(super) fn build_muxed_init_segment(
+    video_config: &VideoConfig,
+    audio_config: &AudioConfig,
+) -> Vec<u8> {
     concat_box(vec![
         ftyp(&[b"avc1", b"mp4a"]),
         muxed_moov(video_config, audio_config),

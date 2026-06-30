@@ -41,7 +41,7 @@ struct FlvTagHeader {
 }
 
 #[derive(Debug)]
-pub struct FlvDemuxer {
+pub(crate) struct FlvDemuxer {
     max_tag_data_size: usize,
     buffer: Vec<u8>,
     state: FlvParseState,
@@ -58,7 +58,7 @@ impl Default for FlvDemuxer {
 
 impl FlvDemuxer {
     #[must_use]
-    pub fn new(max_tag_data_size: usize) -> Self {
+    pub(crate) fn new(max_tag_data_size: usize) -> Self {
         Self {
             max_tag_data_size,
             buffer: Vec::new(),
@@ -69,12 +69,12 @@ impl FlvDemuxer {
         }
     }
 
-    pub fn push(&mut self, data: &[u8], out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
+    pub(crate) fn push(&mut self, data: &[u8], out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
         self.buffer.extend_from_slice(data);
         self.parse_available(out)
     }
 
-    pub fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
+    pub(crate) fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
         if self.buffer.is_empty() {
             return Ok(());
         }

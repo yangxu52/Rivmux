@@ -1,17 +1,26 @@
 //! Rust transmux core crate for Rivmux.
 
-pub mod codec;
-pub mod core;
-pub mod demuxer;
-pub mod error;
-pub mod event;
-pub mod metadata;
-pub mod muxer;
-pub mod probe;
-pub mod sample;
+mod codec;
+mod demuxer;
+mod error;
+mod event;
+mod metadata;
+mod muxer;
+mod probe;
+mod sample;
+mod transmuxer;
 #[cfg(feature = "wasm")]
-pub mod wasm;
+mod wasm;
 
-pub use crate::core::{CoreConfig, TransmuxCore};
+pub use crate::codec::aac::AudioConfig;
+pub use crate::codec::avc::VideoConfig;
 pub use crate::error::{CoreError, CoreErrorCode};
-pub use crate::event::{CoreEvent, MediaInfo};
+pub use crate::event::{
+    CoreEvent, CoreWarning, Discontinuity, InitSegment, MediaInfo, MediaSegment, TrackKind,
+};
+pub use crate::metadata::MetadataEvent;
+pub use crate::probe::{AudioCodecKind, ContainerKind, ProbeResult, VideoCodecKind};
+pub use crate::sample::{AudioSample, SampleTiming, VideoSample};
+pub use crate::transmuxer::{CoreConfig, TransmuxCore};
+#[cfg(feature = "wasm")]
+pub use crate::wasm::WasmTransmuxCore;

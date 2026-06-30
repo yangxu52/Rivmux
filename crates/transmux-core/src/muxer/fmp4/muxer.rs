@@ -12,7 +12,7 @@ use crate::muxer::fmp4::media_segment::{
 use crate::sample::{AudioSample, VideoSample};
 
 #[derive(Debug, Default)]
-pub struct Fmp4Muxer {
+pub(crate) struct Fmp4Muxer {
     video_config: Option<VideoConfig>,
     audio_config: Option<AudioConfig>,
     next_video_sequence_number: u32,
@@ -22,7 +22,7 @@ pub struct Fmp4Muxer {
 }
 
 impl Fmp4Muxer {
-    pub fn on_video_config(
+    pub(crate) fn on_video_config(
         &mut self,
         config: VideoConfig,
         out: &mut Vec<CoreEvent>,
@@ -37,7 +37,7 @@ impl Fmp4Muxer {
         Ok(())
     }
 
-    pub fn on_audio_config(
+    pub(crate) fn on_audio_config(
         &mut self,
         config: AudioConfig,
         out: &mut Vec<CoreEvent>,
@@ -51,7 +51,7 @@ impl Fmp4Muxer {
         Ok(())
     }
 
-    pub fn push_video(
+    pub(crate) fn push_video(
         &mut self,
         sample: VideoSample,
         out: &mut Vec<CoreEvent>,
@@ -89,7 +89,7 @@ impl Fmp4Muxer {
         Ok(())
     }
 
-    pub fn push_audio(
+    pub(crate) fn push_audio(
         &mut self,
         sample: AudioSample,
         out: &mut Vec<CoreEvent>,
@@ -186,7 +186,7 @@ impl Fmp4Muxer {
         self.init_segment_mode = InitSegmentMode::Muxed;
     }
 
-    pub fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
+    pub(crate) fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
         Ok(())
     }
 }

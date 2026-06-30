@@ -13,7 +13,7 @@ pub struct AudioConfig {
     pub audio_specific_config: Vec<u8>,
 }
 
-pub fn parse_audio_specific_config(data: &[u8]) -> Result<AudioConfig, CoreError> {
+pub(crate) fn parse_audio_specific_config(data: &[u8]) -> Result<AudioConfig, CoreError> {
     if data.len() < 2 {
         return Err(CoreError::new(
             CoreErrorCode::InvalidCodecConfig,
