@@ -8,6 +8,7 @@ mod metadata;
 mod muxer;
 mod probe;
 mod sample;
+mod timeline;
 mod transmuxer;
 #[cfg(feature = "wasm")]
 mod wasm;

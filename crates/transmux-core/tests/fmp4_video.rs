@@ -10,7 +10,7 @@ use support::{
 fn emits_video_init_and_keyframe_media_segment() {
     let input = build_flv(vec![
         video_sequence_header_tag(&minimal_avcc()),
-        video_sample_tag(0, true, 2, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(1_000, true, 2, &[0x00, 0x00, 0x00, 0x01, 0x65]),
     ]);
     let mut core = TransmuxCore::new(CoreConfig::default());
 

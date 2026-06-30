@@ -60,8 +60,8 @@ fn parses_flv_header_and_tags_across_arbitrary_chunk_boundaries() {
             event,
             CoreEvent::VideoSample(sample)
                 if sample.is_keyframe
-                    && sample.timing.dts_ms == 40
-                    && sample.timing.pts_ms == 42
+                    && sample.timing.dts_ms == 0
+                    && sample.timing.pts_ms == 2
                     && sample.data == [0x00, 0x00, 0x00, 0x01, 0x65]
         )
     }));
@@ -71,6 +71,8 @@ fn parses_flv_header_and_tags_across_arbitrary_chunk_boundaries() {
             CoreEvent::AudioSample(sample)
                 if sample.sample_rate == 44_100
                     && sample.sample_count == 1024
+                    && sample.timing.dts_ms == 0
+                    && sample.timing.pts_ms == 0
                     && sample.data == [0x21, 0x22, 0x23]
         )
     }));

@@ -2,6 +2,7 @@ use crate::demuxer::flv::FlvDemuxer;
 use crate::error::CoreError;
 use crate::event::CoreEvent;
 use crate::muxer::fmp4::Fmp4Muxer;
+use crate::timeline::TimestampNormalizer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreConfig {
@@ -20,6 +21,7 @@ impl Default for CoreConfig {
 pub struct TransmuxCore {
     config: CoreConfig,
     demuxer: FlvDemuxer,
+    timeline: TimestampNormalizer,
     muxer: Fmp4Muxer,
     events: Vec<CoreEvent>,
 }
@@ -29,6 +31,7 @@ impl TransmuxCore {
     pub fn new(config: CoreConfig) -> Self {
         Self {
             demuxer: FlvDemuxer::new(config.max_tag_data_size),
+            timeline: TimestampNormalizer::default(),
             muxer: Fmp4Muxer::default(),
             config,
             events: Vec::new(),
@@ -59,38 +62,45 @@ impl TransmuxCore {
 
     pub fn reset(&mut self) {
         self.demuxer = FlvDemuxer::new(self.config.max_tag_data_size);
+        self.timeline = TimestampNormalizer::default();
         self.muxer = Fmp4Muxer::default();
         self.events.clear();
     }
 
     fn process_demux_events(&mut self, demux_events: Vec<CoreEvent>) -> Result<(), CoreError> {
         for event in demux_events {
-            match &event {
+            match event {
                 CoreEvent::VideoConfig(config) => {
-                    self.events.push(event.clone());
+                    self.events.push(CoreEvent::VideoConfig(config.clone()));
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.on_video_config(config.clone(), &mut mux_events);
+                    let mux_result = self.muxer.on_video_config(config, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }
                 CoreEvent::VideoSample(sample) => {
-                    self.events.push(event.clone());
+                    let normalized = self.timeline.normalize_video_sample(sample);
+                    self.events.extend(normalized.events);
+                    let sample = normalized.sample;
+                    self.events.push(CoreEvent::VideoSample(sample.clone()));
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.push_video(sample.clone(), &mut mux_events);
+                    let mux_result = self.muxer.push_video(sample, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }
                 CoreEvent::AudioConfig(config) => {
-                    self.events.push(event.clone());
+                    self.events.push(CoreEvent::AudioConfig(config.clone()));
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.on_audio_config(config.clone(), &mut mux_events);
+                    let mux_result = self.muxer.on_audio_config(config, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }
                 CoreEvent::AudioSample(sample) => {
-                    self.events.push(event.clone());
+                    let normalized = self.timeline.normalize_audio_sample(sample);
+                    self.events.extend(normalized.events);
+                    let sample = normalized.sample;
+                    self.events.push(CoreEvent::AudioSample(sample.clone()));
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.push_audio(sample.clone(), &mut mux_events);
+                    let mux_result = self.muxer.push_audio(sample, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }

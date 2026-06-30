@@ -39,8 +39,8 @@ fn emits_aac_init_and_media_segment() {
     assert!(find_box(&init.bytes, b"mp4a").is_some());
     assert!(find_box(&init.bytes, b"esds").is_some());
 
-    assert_eq!(media.dts_start_ms, 20);
-    assert_eq!(media.dts_end_ms, 43);
+    assert_eq!(media.dts_start_ms, 0);
+    assert_eq!(media.dts_end_ms, 23);
     assert!(media.keyframe);
     assert_eq!(read_box_type(&media.bytes, 0), "moof");
     assert!(find_box(&media.bytes, b"mdat").is_some());
