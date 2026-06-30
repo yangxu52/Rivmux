@@ -99,8 +99,8 @@ export class MseController {
     }
   }
 
-  async cleanupBefore(cutoff: number): Promise<void> {
-    if (!Number.isFinite(cutoff) || cutoff <= 0 || cutoff <= this.lastCleanupBefore + CLEANUP_STEP_SECONDS) {
+  async cleanupBefore(cutoff: number, options: MseCleanupOptions = {}): Promise<void> {
+    if (!Number.isFinite(cutoff) || cutoff <= 0 || (!options.force && cutoff <= this.lastCleanupBefore + CLEANUP_STEP_SECONDS)) {
       return
     }
 
@@ -206,3 +206,7 @@ function createMp4Mime(track: CoreInitSegment['track'], codec: string): string {
 }
 
 const CLEANUP_STEP_SECONDS = 0.25
+
+type MseCleanupOptions = {
+  force?: boolean
+}

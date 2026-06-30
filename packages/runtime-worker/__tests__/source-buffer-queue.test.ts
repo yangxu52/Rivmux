@@ -66,12 +66,36 @@ describe('SourceBufferQueue', () => {
     expect(sourceBuffer.remove).toHaveBeenCalledTimes(2)
     expect(queue.bufferedDuration).toBe(4)
   })
+
+  it('recovers after a synchronous append error so callers can retry', async () => {
+    const sourceBuffer = new MockSourceBuffer()
+    const queue = new SourceBufferQueue(sourceBuffer as unknown as SourceBuffer)
+    const first = new ArrayBuffer(1)
+    const retry = new ArrayBuffer(2)
+    sourceBuffer.appendErrors.push(createQuotaExceededError())
+
+    await expect(queue.append(first)).rejects.toMatchObject({ name: 'QuotaExceededError' })
+
+    const retryDone = queue.append(retry)
+    await flushPromises()
+    expect(sourceBuffer.appendBuffer).toHaveBeenCalledWith(retry)
+    sourceBuffer.finishUpdate()
+    await retryDone
+    expect(queue.length).toBe(0)
+    expect(queue.queuedBytes).toBe(0)
+  })
 })
 
 class MockSourceBuffer {
   updating = false
   buffered: TimeRanges
+  readonly appendErrors: Error[] = []
   readonly appendBuffer = vi.fn(() => {
+    const error = this.appendErrors.shift()
+    if (error !== undefined) {
+      throw error
+    }
+
     this.updating = true
   })
   readonly remove = vi.fn(() => {
@@ -111,4 +135,10 @@ function createTimeRanges(ranges: readonly BufferedRange[]): TimeRanges {
 
 function flushPromises(): Promise<void> {
   return Promise.resolve()
+}
+
+function createQuotaExceededError(): Error {
+  const error = new Error('SourceBuffer quota exceeded.')
+  error.name = 'QuotaExceededError'
+  return error
 }

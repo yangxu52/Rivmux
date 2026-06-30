@@ -13,6 +13,9 @@ import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, Wor
 import type { CoreEvent, TransmuxCoreHost } from './wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
+type RuntimeMseCleanupOptions = {
+  force?: boolean
+}
 
 export type RuntimeWorkerPort = {
   postMessage(message: WorkerMessage, transfer?: Transferable[]): void
@@ -33,7 +36,7 @@ export type RuntimeMseController = {
   appendFixture(fixture: ReturnType<typeof createM1StaticFmp4Fixture>): Promise<void>
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
   appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void>
-  cleanupBefore(cutoff: number): Promise<void>
+  cleanupBefore(cutoff: number, options?: RuntimeMseCleanupOptions): Promise<void>
   destroy(): void
 }
 
@@ -79,6 +82,10 @@ export class RuntimeWorker {
 
   async handleCommand(command: WorkerCommand): Promise<void> {
     if (this.state === 'destroyed') {
+      return
+    }
+
+    if (this.state === 'fatal-error' && command.type !== 'destroy') {
       return
     }
 
@@ -343,8 +350,7 @@ export class RuntimeWorker {
           this.post({ type: 'warning', warning: coreWarningToPlayerWarning(event.data) })
           break
         case 'fatalError':
-          this.post({ type: 'error', error: coreErrorToPlayerError(event.data) })
-          this.state = 'fatal-error'
+          this.failWithError(coreErrorToPlayerError(event.data))
           return false
         case 'initSegment':
           if (!(await this.appendToMse(() => this.mse?.appendInitSegment(event.data)))) {
@@ -400,9 +406,47 @@ export class RuntimeWorker {
       await append()
       return true
     } catch (cause) {
+      if (isQuotaExceededError(cause) && (await this.retryAppendAfterQuotaCleanup(append))) {
+        return true
+      }
+
       this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
       return false
     }
+  }
+
+  private async retryAppendAfterQuotaCleanup(append: () => Promise<void> | undefined): Promise<boolean> {
+    const mse = this.mse
+    const cutoff = this.quotaCleanupCutoff()
+    if (mse === undefined || cutoff === undefined || cutoff <= 0) {
+      return false
+    }
+
+    try {
+      await mse.cleanupBefore(cutoff, { force: true })
+      await append()
+      this.post({
+        type: 'warning',
+        warning: {
+          code: 'RIVMUX_MSE_QUOTA_RETRY',
+          message: 'MSE quota was exceeded; old buffered ranges were cleaned before retrying append.',
+        },
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private quotaCleanupCutoff(): number | undefined {
+    const backwardBuffer = this.options?.latency.backwardBuffer ?? 0
+    const currentTime = this.videoState?.currentTime
+    if (currentTime !== undefined && Number.isFinite(currentTime)) {
+      return Math.max(0, currentTime - backwardBuffer)
+    }
+
+    const bufferedEnd = this.mse?.bufferedEnd
+    return bufferedEnd === undefined ? undefined : Math.max(0, bufferedEnd - backwardBuffer)
   }
 
   private async applyLatencyPolicy(): Promise<void> {
@@ -481,9 +525,23 @@ export class RuntimeWorker {
 
   private failWithError(error: PlayerError): void {
     if (error.terminal) {
-      this.state = 'fatal-error'
+      this.enterFatalErrorState()
     }
     this.post({ type: 'error', error })
+  }
+
+  private enterFatalErrorState(): void {
+    if (this.state === 'fatal-error') {
+      return
+    }
+
+    this.state = 'fatal-error'
+    void this.closeLoader()
+    this.mse?.destroy()
+    this.mse = undefined
+    this.latencyController?.reset()
+    this.videoState = undefined
+    this.lastLatencyMetrics = {}
   }
 
   private post(message: WorkerMessage, transfer?: Transferable[]): void {
@@ -513,6 +571,14 @@ function serializeCause(cause: unknown): unknown {
   }
 
   return cause
+}
+
+function isQuotaExceededError(cause: unknown): boolean {
+  return isNamedError(cause, 'QuotaExceededError')
+}
+
+function isNamedError(value: unknown, name: string): boolean {
+  return typeof value === 'object' && value !== null && 'name' in value && (value as { name?: unknown }).name === name
 }
 
 function detectWorkerRuntime(): PlayerError | undefined {

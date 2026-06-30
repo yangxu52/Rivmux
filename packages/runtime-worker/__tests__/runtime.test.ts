@@ -404,6 +404,7 @@ describe('RuntimeWorker', () => {
     await loader.waitForDone()
 
     expect(loader.closed).toBe(true)
+    expect(mse.destroyed).toBe(true)
     expect(port.messages).toContainEqual({
       type: 'error',
       error: {
@@ -417,6 +418,39 @@ describe('RuntimeWorker', () => {
         },
       },
     })
+  })
+
+  it('cleans buffered ranges and retries once when MSE append exceeds quota', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const mse = new MockMseController([{ start: 0, end: 8 }])
+    mse.appendMediaErrors.push(createQuotaExceededError())
+    const transmuxCore = new MockTransmuxCore([
+      [{ type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: new Uint8Array([1]) } }],
+    ])
+    const runtime = createRuntime(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(loader.closed).toBe(true)
+    expect(mse.destroyed).toBe(false)
+    expect(mse.cleanupRequests).toStrictEqual([6.5])
+    expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: new Uint8Array([1]) }])
+    expect(port.messages).toContainEqual({
+      type: 'warning',
+      warning: {
+        code: 'RIVMUX_MSE_QUOTA_RETRY',
+        message: 'MSE quota was exceeded; old buffered ranges were cleaned before retrying append.',
+      },
+    })
+    expect(port.messages.some((message) => message.type === 'error')).toBe(false)
   })
 
   it('closes the loader before reporting stopped', async () => {
@@ -480,8 +514,10 @@ class MockMseController implements RuntimeMseController {
   readonly initSegments: Array<Extract<CoreEvent, { type: 'initSegment' }>['data']> = []
   readonly mediaSegments: Array<Extract<CoreEvent, { type: 'mediaSegment' }>['data']> = []
   readonly cleanupRequests: number[] = []
+  readonly appendMediaErrors: Error[] = []
   appendInitError?: Error
   appendedFixtureCount = 0
+  destroyed = false
 
   constructor(readonly bufferedRanges = [{ start: 0, end: 1 }]) {}
 
@@ -521,6 +557,11 @@ class MockMseController implements RuntimeMseController {
   }
 
   appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void> {
+    const error = this.appendMediaErrors.shift()
+    if (error !== undefined) {
+      return Promise.reject(error)
+    }
+
     this.mediaSegments.push(segment)
     return Promise.resolve()
   }
@@ -530,7 +571,9 @@ class MockMseController implements RuntimeMseController {
     return Promise.resolve()
   }
 
-  destroy(): void {}
+  destroy(): void {
+    this.destroyed = true
+  }
 }
 
 class MockLoader implements StreamLoader {
@@ -708,6 +751,12 @@ function createRuntime(port: MockPort, dependencies: RuntimeWorkerDependencies =
     detectRuntime: () => undefined,
     ...dependencies,
   })
+}
+
+function createQuotaExceededError(): Error {
+  const error = new Error('SourceBuffer quota exceeded.')
+  error.name = 'QuotaExceededError'
+  return error
 }
 
 function createOptions(): NormalizedRivmuxPlayerOptions {
