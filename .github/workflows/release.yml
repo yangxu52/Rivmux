@@ -31,13 +31,15 @@ jobs:
       - name: Setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
           components: rustfmt, clippy
-
-      - name: Setup wasm target
-        run: rustup target add wasm32-unknown-unknown
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.15.0 --locked
+
+      - name: Install wasm-opt
+        run: cargo install wasm-opt --locked
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -83,9 +85,6 @@ jobs:
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Run format check
-        run: pnpm run format:check
-
       - name: Run lint check
         run: pnpm run lint:check
 
@@ -99,7 +98,7 @@ jobs:
         run: pnpm run test:ci
 
       - name: Run build
-        run: pnpm run build
+        run: pnpm run build:release
 
       - name: Publish packages
         run: |

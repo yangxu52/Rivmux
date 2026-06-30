@@ -9,8 +9,7 @@ authors.workspace = true
 readme = "README.md"
 
 [lib]
-path = "src/lib.rs"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
@@ -18,6 +17,14 @@ serde-wasm-bindgen = { version = "0.6", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
-default = []
+default = ["wasm"]
 serde = ["dep:serde"]
 wasm = ["serde", "dep:serde-wasm-bindgen", "dep:wasm-bindgen"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+  '-O4',
+  '--enable-simd',
+  '--enable-bulk-memory',
+  '--enable-multivalue',
+]
