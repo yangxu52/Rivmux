@@ -1,4 +1,4 @@
-use crate::mux::fmp4::boxes::{
+use crate::muxer::fmp4::boxes::{
     concat_box, write_box, write_full_box, write_i32, write_u32, write_u64,
 };
 use crate::sample::{AudioSample, VideoSample};

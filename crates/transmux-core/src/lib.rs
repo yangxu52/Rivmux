@@ -2,11 +2,11 @@
 
 pub mod codec;
 pub mod core;
-pub mod demux;
+pub mod demuxer;
 pub mod error;
 pub mod event;
 pub mod metadata;
-pub mod mux;
+pub mod muxer;
 pub mod probe;
 pub mod sample;
 #[cfg(feature = "wasm")]

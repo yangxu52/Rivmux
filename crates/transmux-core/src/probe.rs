@@ -3,7 +3,7 @@
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum ContainerKind {
     Flv,
-    MpegTs,
+    Mpegts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

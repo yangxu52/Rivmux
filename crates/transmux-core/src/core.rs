@@ -1,7 +1,7 @@
-use crate::demux::flv::FlvDemuxer;
+use crate::demuxer::flv::FlvDemuxer;
 use crate::error::CoreError;
 use crate::event::CoreEvent;
-use crate::mux::fmp4::Fmp4Muxer;
+use crate::muxer::fmp4::Fmp4Muxer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreConfig {

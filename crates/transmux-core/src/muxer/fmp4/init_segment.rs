@@ -1,6 +1,6 @@
 use crate::codec::aac::AudioConfig;
 use crate::codec::avc::VideoConfig;
-use crate::mux::fmp4::boxes::{
+use crate::muxer::fmp4::boxes::{
     concat_box, write_box, write_fixed_16_16, write_full_box, write_u16, write_u32,
 };
 

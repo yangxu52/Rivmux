@@ -2,11 +2,11 @@ use crate::codec::aac::AudioConfig;
 use crate::codec::avc::VideoConfig;
 use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, InitSegment, MediaSegment, TrackKind};
-use crate::mux::fmp4::init_segment::{
+use crate::muxer::fmp4::init_segment::{
     audio_timescale, build_audio_init_segment, build_muxed_init_segment, build_video_init_segment,
     video_timescale,
 };
-use crate::mux::fmp4::media_segment::{
+use crate::muxer::fmp4::media_segment::{
     audio_sample_duration_ms, build_audio_media_segment, build_video_media_segment, sample_duration,
 };
 use crate::sample::{AudioSample, VideoSample};

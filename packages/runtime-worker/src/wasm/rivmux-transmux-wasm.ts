@@ -16,7 +16,7 @@ export type CoreError = {
 }
 
 export type CoreProbeResult = {
-  container: 'flv' | 'mpegTs'
+  container: 'flv' | 'mpegts'
   video?: 'avc' | 'hevc' | 'av1'
   audio?: 'aac' | 'mp3' | 'ac3' | 'eac3' | 'opus'
 }
@@ -215,7 +215,7 @@ function normalizeMediaSegment(value: unknown): CoreMediaSegment {
 }
 
 function normalizeProbeResult(value: unknown): CoreProbeResult {
-  if (!isRecord(value) || (value.container !== 'flv' && value.container !== 'mpegTs')) {
+  if (!isRecord(value) || (value.container !== 'flv' && value.container !== 'mpegts')) {
     throw new TypeError('Transmux core probe result has an unsupported container.')
   }
 

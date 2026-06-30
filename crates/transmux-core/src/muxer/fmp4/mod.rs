@@ -1,6 +1,6 @@
 mod boxes;
 mod init_segment;
 mod media_segment;
-mod writer;
+mod muxer;
 
-pub use writer::Fmp4Muxer;
+pub use muxer::Fmp4Muxer;
