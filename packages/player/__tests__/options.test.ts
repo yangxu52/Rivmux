@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { normalizePlayerOptions } from '../src/index'
 
+import type { RivmuxPlayerOptions } from '../src/index'
+
 describe('normalizePlayerOptions', () => {
   it('fills domain defaults without mutating user values', () => {
     const options = normalizePlayerOptions({
@@ -39,4 +41,26 @@ describe('normalizePlayerOptions', () => {
       wasmUrl: '/assets/custom-core.wasm',
     })
   })
+
+  it('rejects invalid latency configuration before worker initialization', () => {
+    expectOptionError({ latency: { startupBuffer: Number.NaN } }, 'RIVMUX_INVALID_LATENCY_OPTION')
+    expectOptionError({ latency: { target: 0 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
+    expectOptionError({ latency: { backwardBuffer: -1 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
+    expectOptionError({ latency: { target: 2, max: 1.5 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
+    expectOptionError({ latency: { target: 2, maxForwardBuffer: 1.5 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
+  })
+
+  it('rejects runtime options that are not implemented by the M1 pipeline', () => {
+    expectOptionError({ runtime: { preferWorkerMse: false } }, 'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK')
+    expectOptionError({ runtime: { wasmModule: {} as WebAssembly.Module } }, 'RIVMUX_UNSUPPORTED_WASM_MODULE_OPTION')
+  })
 })
+
+function expectOptionError(options: RivmuxPlayerOptions, code: string): void {
+  try {
+    normalizePlayerOptions(options)
+    throw new Error(`Expected ${code}.`)
+  } catch (error) {
+    expect(error).toMatchObject({ name: code })
+  }
+}

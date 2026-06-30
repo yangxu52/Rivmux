@@ -1,4 +1,5 @@
 export const M1_VIDEO_MIME = 'video/mp4; codecs="avc1.42C01E"'
+export const M1_AUDIO_MIME = 'audio/mp4; codecs="mp4a.40.2"'
 
 export function createMp4VideoMime(codec: string): string {
   return `video/mp4; codecs="${codec}"`

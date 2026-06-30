@@ -1,4 +1,6 @@
-import type { NormalizedRivmuxPlayerOptions, RivmuxPlayerOptions } from '@rivmux/protocol'
+import { createPlayerError, playerErrorToException } from './errors'
+
+import type { NormalizedRivmuxPlayerOptions, PlayerErrorKind, RivmuxPlayerOptions } from '@rivmux/protocol'
 
 export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   playback: {
@@ -30,7 +32,7 @@ export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
 }
 
 export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): NormalizedRivmuxPlayerOptions {
-  return {
+  const normalizedOptions = {
     playback: {
       ...DEFAULT_RIVMUX_PLAYER_OPTIONS.playback,
       ...options.playback,
@@ -60,4 +62,60 @@ export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): Norma
       ...options.diagnostics,
     },
   }
+
+  validateNormalizedOptions(normalizedOptions)
+  return normalizedOptions
+}
+
+function validateNormalizedOptions(options: NormalizedRivmuxPlayerOptions): void {
+  validateLatencyOptions(options)
+  validateRuntimeOptions(options)
+}
+
+function validateLatencyOptions(options: NormalizedRivmuxPlayerOptions): void {
+  const latency = options.latency
+
+  assertFiniteNonNegativeLatency(latency.startupBuffer, 'latency.startupBuffer')
+  assertFinitePositiveLatency(latency.target, 'latency.target')
+  assertFiniteNonNegativeLatency(latency.max, 'latency.max')
+  assertFiniteNonNegativeLatency(latency.maxForwardBuffer, 'latency.maxForwardBuffer')
+  assertFiniteNonNegativeLatency(latency.backwardBuffer, 'latency.backwardBuffer')
+
+  if (latency.max < latency.target) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', 'latency.max must be greater than or equal to latency.target.')
+  }
+
+  if (latency.maxForwardBuffer < latency.target) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', 'latency.maxForwardBuffer must be greater than or equal to latency.target.')
+  }
+}
+
+function validateRuntimeOptions(options: NormalizedRivmuxPlayerOptions): void {
+  if (options.runtime.preferWorkerMse !== true) {
+    throwOptionError(
+      'unsupported',
+      'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK',
+      'Main-thread MSE fallback is not implemented; runtime.preferWorkerMse must remain true.'
+    )
+  }
+
+  if (options.runtime.wasmModule !== undefined) {
+    throwOptionError('unsupported', 'RIVMUX_UNSUPPORTED_WASM_MODULE_OPTION', 'runtime.wasmModule is reserved and is not implemented by the default runtime.')
+  }
+}
+
+function assertFiniteNonNegativeLatency(value: number, field: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', `${field} must be a finite number greater than or equal to 0.`)
+  }
+}
+
+function assertFinitePositiveLatency(value: number, field: string): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', `${field} must be a finite number greater than 0.`)
+  }
+}
+
+function throwOptionError(kind: PlayerErrorKind, code: string, message: string): never {
+  throw playerErrorToException(createPlayerError(kind, code, message, true))
 }

@@ -2,6 +2,7 @@ import { createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
 import { LatencyController } from './latency/latency-controller'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
+import { M1_AUDIO_MIME, M1_VIDEO_MIME } from './mse/mime'
 import { loadWasmTransmuxCoreHost } from './wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from './wasm/rivmux-transmux-wasm'
 
@@ -40,6 +41,7 @@ export type RuntimeWorkerDependencies = {
   createMseController?: () => RuntimeMseController
   createLoader?: (config: StreamLoaderConfig) => StreamLoader
   createTransmuxCore?: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
+  detectRuntime?: () => PlayerError | undefined
   now?: () => number
 }
 
@@ -48,6 +50,7 @@ export class RuntimeWorker {
   private readonly createMseController: () => RuntimeMseController
   private readonly createLoader: (config: StreamLoaderConfig) => StreamLoader
   private readonly createTransmuxCore: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
+  private readonly detectRuntime: () => PlayerError | undefined
   private readonly now: () => number
   private state: RuntimeState = 'idle'
   private url?: string
@@ -70,6 +73,7 @@ export class RuntimeWorker {
     this.createMseController = dependencies.createMseController ?? (() => new MseController())
     this.createLoader = dependencies.createLoader ?? ((config) => new HttpFlvLoader(config))
     this.createTransmuxCore = dependencies.createTransmuxCore ?? ((options) => loadWasmTransmuxCoreHost(options.runtime.wasmUrl))
+    this.detectRuntime = dependencies.detectRuntime ?? detectWorkerRuntime
     this.now = dependencies.now ?? (() => performance.now())
   }
 
@@ -81,6 +85,13 @@ export class RuntimeWorker {
     try {
       switch (command.type) {
         case 'init':
+          {
+            const runtimeError = this.detectRuntime()
+            if (runtimeError !== undefined) {
+              this.failWithError(runtimeError)
+              return
+            }
+          }
           this.url = command.url
           this.options = command.options
           this.latencyController = createLatencyController(command.options)
@@ -465,7 +476,11 @@ export class RuntimeWorker {
 
   private fail(kind: PlayerError['kind'], code: string, message: string, terminal: boolean, cause?: unknown): void {
     const error = cause === undefined ? { kind, code, message, terminal } : { kind, code, message, terminal, cause: serializeCause(cause) }
-    if (terminal) {
+    this.failWithError(error)
+  }
+
+  private failWithError(error: PlayerError): void {
+    if (error.terminal) {
       this.state = 'fatal-error'
     }
     this.post({ type: 'error', error })
@@ -498,6 +513,46 @@ function serializeCause(cause: unknown): unknown {
   }
 
   return cause
+}
+
+function detectWorkerRuntime(): PlayerError | undefined {
+  if (typeof fetch !== 'function') {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_FETCH', 'Fetch is not available in this worker runtime.')
+  }
+
+  if (typeof ReadableStream === 'undefined') {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_READABLE_STREAM', 'ReadableStream is not available in this worker runtime.')
+  }
+
+  if (typeof WebAssembly === 'undefined') {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_WASM', 'WebAssembly is not available in this worker runtime.')
+  }
+
+  if (typeof MediaSource === 'undefined') {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_MSE', 'MediaSource is not available in this worker runtime.')
+  }
+
+  if (MediaSource.canConstructInDedicatedWorker !== true) {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_WORKER_MSE', 'MediaSource cannot be constructed in this worker runtime.')
+  }
+
+  if (typeof MediaSource.isTypeSupported !== 'function') {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_MSE_TYPE_CHECK', 'MediaSource.isTypeSupported is not available in this worker runtime.')
+  }
+
+  if (!MediaSource.isTypeSupported(M1_VIDEO_MIME)) {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_M1_VIDEO_MIME', `MSE does not support ${M1_VIDEO_MIME}.`)
+  }
+
+  if (!MediaSource.isTypeSupported(M1_AUDIO_MIME)) {
+    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_M1_AUDIO_MIME', `MSE does not support ${M1_AUDIO_MIME}.`)
+  }
+
+  return undefined
+}
+
+function createUnsupportedRuntimeError(code: string, message: string): PlayerError {
+  return { kind: 'unsupported', code, message, terminal: true }
 }
 
 function createLatencyController(options: NormalizedRivmuxPlayerOptions): LatencyController {
