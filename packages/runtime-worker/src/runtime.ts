@@ -1,7 +1,7 @@
 import { LatencyController } from './latency/latency-controller'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
-import { M1_AUDIO_MIME, M1_VIDEO_MIME } from './mse/mime'
+import { REQUIRED_MSE_MIME_TYPES } from './mse/mime'
 import { loadWasmTransmuxCoreHost } from './wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from './wasm/rivmux-transmux-wasm'
 
@@ -594,12 +594,10 @@ function detectWorkerRuntime(): PlayerError | undefined {
     return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_MSE_TYPE_CHECK', 'MediaSource.isTypeSupported is not available in this worker runtime.')
   }
 
-  if (!MediaSource.isTypeSupported(M1_VIDEO_MIME)) {
-    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_M1_VIDEO_MIME', `MSE does not support ${M1_VIDEO_MIME}.`)
-  }
-
-  if (!MediaSource.isTypeSupported(M1_AUDIO_MIME)) {
-    return createUnsupportedRuntimeError('RIVMUX_UNSUPPORTED_M1_AUDIO_MIME', `MSE does not support ${M1_AUDIO_MIME}.`)
+  for (const requirement of REQUIRED_MSE_MIME_TYPES) {
+    if (!MediaSource.isTypeSupported(requirement.mimeType)) {
+      return createUnsupportedRuntimeError(requirement.unsupportedCode, `MSE does not support ${requirement.mimeType}.`)
+    }
   }
 
   return undefined

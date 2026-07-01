@@ -1,4 +1,4 @@
-import { M1_VIDEO_MIME, assertMseSupport, createMp4AudioMime, createMp4VideoMime } from './mime'
+import { assertMseSupport, assertRequiredMseSupport, createMp4AudioMime, createMp4VideoMime } from './mime'
 import { SourceBufferQueue } from './source-buffer-queue'
 
 import type { BufferedRange } from '../latency/buffer-ranges'
@@ -47,7 +47,7 @@ export class MseController {
   }
 
   async createMediaSourceHandle(): Promise<MediaSourceHandle> {
-    assertMseSupport(M1_VIDEO_MIME)
+    assertRequiredMseSupport()
 
     const mediaSource = new MediaSource()
     this.mediaSource = mediaSource

@@ -2,8 +2,24 @@ import { createPlayerError } from './errors'
 
 import type { PlayerError } from '@rivmux/protocol'
 
-export const M1_VIDEO_MIME = 'video/mp4; codecs="avc1.42C01E"'
-export const M1_AUDIO_MIME = 'audio/mp4; codecs="mp4a.40.2"'
+export type RequiredMseMimeType = {
+  readonly mediaType: 'video' | 'audio'
+  readonly mimeType: string
+  readonly unsupportedCode: string
+}
+
+export const REQUIRED_MSE_MIME_TYPES = [
+  {
+    mediaType: 'video',
+    mimeType: createMp4Mime('video', 'avc1.42C01E'),
+    unsupportedCode: 'RIVMUX_UNSUPPORTED_MSE_VIDEO_MIME',
+  },
+  {
+    mediaType: 'audio',
+    mimeType: createMp4Mime('audio', 'mp4a.40.2'),
+    unsupportedCode: 'RIVMUX_UNSUPPORTED_MSE_AUDIO_MIME',
+  },
+] as const satisfies readonly RequiredMseMimeType[]
 
 export function detectMainThreadRuntime(): PlayerError | undefined {
   if (typeof Worker === 'undefined') {
@@ -34,13 +50,15 @@ export function detectMainThreadRuntime(): PlayerError | undefined {
     return createPlayerError('unsupported', 'RIVMUX_UNSUPPORTED_MSE_TYPE_CHECK', 'MediaSource.isTypeSupported is not available in this runtime.', true)
   }
 
-  if (!MediaSource.isTypeSupported(M1_VIDEO_MIME)) {
-    return createPlayerError('unsupported', 'RIVMUX_UNSUPPORTED_M1_VIDEO_MIME', `MSE does not support ${M1_VIDEO_MIME}.`, true)
-  }
-
-  if (!MediaSource.isTypeSupported(M1_AUDIO_MIME)) {
-    return createPlayerError('unsupported', 'RIVMUX_UNSUPPORTED_M1_AUDIO_MIME', `MSE does not support ${M1_AUDIO_MIME}.`, true)
+  for (const requirement of REQUIRED_MSE_MIME_TYPES) {
+    if (!MediaSource.isTypeSupported(requirement.mimeType)) {
+      return createPlayerError('unsupported', requirement.unsupportedCode, `MSE does not support ${requirement.mimeType}.`, true)
+    }
   }
 
   return undefined
+}
+
+function createMp4Mime(mediaType: RequiredMseMimeType['mediaType'], codec: string): string {
+  return `${mediaType}/mp4; codecs="${codec}"`
 }
