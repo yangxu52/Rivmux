@@ -1,4 +1,3 @@
-import { createM1StaticFmp4Fixture } from './fixtures/m1-static-fmp4'
 import { LatencyController } from './latency/latency-controller'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
 import { MseController } from './mse/mse-controller'
@@ -33,7 +32,6 @@ export type RuntimeMseController = {
   readonly bufferedRanges: BufferedRange[]
   readonly bufferedRangeCount: number
   createMediaSourceHandle(): Promise<MediaSourceHandle>
-  appendFixture(fixture: ReturnType<typeof createM1StaticFmp4Fixture>): Promise<void>
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
   appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void>
   cleanupBefore(cutoff: number, options?: RuntimeMseCleanupOptions): Promise<void>
@@ -167,35 +165,25 @@ export class RuntimeWorker {
       return
     }
 
-    const fixture = createM1StaticFmp4Fixture()
-    const transmuxCore = await this.createTransmuxCore(options)
-    const hasTransmuxCore = transmuxCore !== undefined
-    if (transmuxCore !== undefined) {
-      this.transmuxCore?.destroy()
-      this.transmuxCore = transmuxCore
-    } else {
-      try {
-        await this.mse.appendFixture(fixture)
-      } catch (cause) {
-        this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+    let transmuxCore: TransmuxCoreHost
+    try {
+      const createdCore = await this.createTransmuxCore(options)
+      if (createdCore === undefined) {
+        this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available.', true)
         return
       }
+      transmuxCore = createdCore
+    } catch (cause) {
+      this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available.', true, cause)
+      return
     }
+
+    this.transmuxCore?.destroy()
+    this.transmuxCore = transmuxCore
     this.state = 'started'
-    this.outputBytes = hasTransmuxCore ? 0 : fixture.initSegment.byteLength + fixture.mediaSegment.byteLength
+    this.outputBytes = 0
     this.appendQueueMaxLength = 0
     this.appendQueueMaxBytes = 0
-    if (!hasTransmuxCore) {
-      this.post({
-        type: 'media-info',
-        mediaInfo: {
-          container: 'fmp4',
-          videoCodec: fixture.codec,
-          width: fixture.width,
-          height: fixture.height,
-        },
-      })
-    }
     this.startStatsTimer()
     await this.applyLatencyPolicy()
     this.postStats()

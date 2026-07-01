@@ -62,13 +62,24 @@ describe('RuntimeWorker', () => {
     })
   })
 
-  it('starts the HTTP loader and emits network stats while keeping fixture append output', async () => {
+  it('starts the HTTP loader and emits network stats from transmux core output', async () => {
     const port = new MockPort()
     const loader = new MockLoader([new Uint8Array([1, 2]), new Uint8Array([3])])
+    const initBytes = new Uint8Array([1, 2, 3])
+    const firstMediaBytes = new Uint8Array([4, 5])
+    const secondMediaBytes = new Uint8Array([6])
+    const transmuxCore = new MockTransmuxCore([
+      [
+        { type: 'mediaInfo', data: { container: 'flv', video: 'avc', videoCodec: 'avc1.42E01E' } },
+        { type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes } },
+        { type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: firstMediaBytes } },
+      ],
+      [{ type: 'mediaSegment', data: { track: 'video', dtsStartMs: 40, dtsEndMs: 80, keyframe: false, bytes: secondMediaBytes } }],
+    ])
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => transmuxCore,
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -89,7 +100,7 @@ describe('RuntimeWorker', () => {
       stats: expect.objectContaining({
         bytesReceived: 0,
         currentNetworkSpeed: 0,
-        outputBytes: 28904,
+        outputBytes: 0,
         appendQueueLength: 0,
         bufferedDuration: 1,
       }),
@@ -99,7 +110,7 @@ describe('RuntimeWorker', () => {
       stats: expect.objectContaining({
         bytesReceived: 2,
         currentNetworkSpeed: 2,
-        outputBytes: 28904,
+        outputBytes: 5,
       }),
     })
     expect(statsMessages).toContainEqual({
@@ -107,8 +118,64 @@ describe('RuntimeWorker', () => {
       stats: expect.objectContaining({
         bytesReceived: 3,
         currentNetworkSpeed: 1,
-        outputBytes: 28904,
+        outputBytes: 6,
       }),
+    })
+  })
+
+  it('reports unavailable transmux core as a terminal structured runtime error', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => undefined,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+
+    expect(loader.opened).toBe(false)
+    expect(port.messages.at(-1)).toStrictEqual({
+      type: 'error',
+      error: {
+        kind: 'runtime',
+        code: 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE',
+        message: 'Transmux core is not available.',
+        terminal: true,
+      },
+    })
+  })
+
+  it('reports transmux core creation failures as terminal structured runtime errors', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => {
+        throw new TypeError('WASM core failed to load.')
+      },
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+
+    expect(loader.opened).toBe(false)
+    expect(port.messages.at(-1)).toStrictEqual({
+      type: 'error',
+      error: {
+        kind: 'runtime',
+        code: 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE',
+        message: 'Transmux core is not available.',
+        terminal: true,
+        cause: {
+          name: 'TypeError',
+          message: 'WASM core failed to load.',
+        },
+      },
     })
   })
 
@@ -131,7 +198,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => mse,
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
       now: () => 1250,
     })
 
@@ -176,7 +243,6 @@ describe('RuntimeWorker', () => {
     await loader.waitForDone()
 
     expect(transmuxCore.chunks).toStrictEqual([new Uint8Array([1, 2])])
-    expect(mse.appendedFixtureCount).toBe(0)
     expect(port.messages).toContainEqual({
       type: 'media-info',
       mediaInfo: {
@@ -193,7 +259,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => mse,
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
       now: () => 1000,
     })
 
@@ -227,7 +293,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => mse,
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
       now: () => 1000,
     })
 
@@ -260,7 +326,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => mse,
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
       now: () => now,
     })
 
@@ -310,7 +376,6 @@ describe('RuntimeWorker', () => {
     await runtime.handleCommand({ type: 'start' })
     await loader.waitForDone()
 
-    expect(mse.appendedFixtureCount).toBe(0)
     expect(mse.initSegments).toStrictEqual([
       { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: initBytes },
       { track: 'audio', codec: 'mp4a.40.2', timescale: 44_100, bytes: audioInitBytes },
@@ -360,7 +425,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -459,7 +524,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -478,7 +543,7 @@ describe('RuntimeWorker', () => {
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
-      createTransmuxCore: () => undefined,
+      createTransmuxCore: () => createIdleTransmuxCore(),
     })
 
     await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
@@ -516,7 +581,6 @@ class MockMseController implements RuntimeMseController {
   readonly cleanupRequests: number[] = []
   readonly appendMediaErrors: Error[] = []
   appendInitError?: Error
-  appendedFixtureCount = 0
   destroyed = false
 
   constructor(readonly bufferedRanges = [{ start: 0, end: 1 }]) {}
@@ -540,11 +604,6 @@ class MockMseController implements RuntimeMseController {
 
   createMediaSourceHandle(): Promise<MediaSourceHandle> {
     return Promise.resolve({} as MediaSourceHandle)
-  }
-
-  appendFixture(): Promise<void> {
-    this.appendedFixtureCount += 1
-    return Promise.resolve()
   }
 
   appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void> {
@@ -744,6 +803,10 @@ class MockTransmuxCore implements TransmuxCoreHost {
   reset(): void {}
 
   destroy(): void {}
+}
+
+function createIdleTransmuxCore(): TransmuxCoreHost {
+  return new MockTransmuxCore([])
 }
 
 function createRuntime(port: MockPort, dependencies: RuntimeWorkerDependencies = {}): RuntimeWorker {

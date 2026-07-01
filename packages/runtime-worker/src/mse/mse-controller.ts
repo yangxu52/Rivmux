@@ -1,7 +1,6 @@
 import { M1_VIDEO_MIME, assertMseSupport, createMp4AudioMime, createMp4VideoMime } from './mime'
 import { SourceBufferQueue } from './source-buffer-queue'
 
-import type { M1StaticFmp4Fixture } from '../fixtures/m1-static-fmp4'
 import type { BufferedRange } from '../latency/buffer-ranges'
 import type { CoreInitSegment, CoreMediaSegment } from '../wasm/rivmux-transmux-wasm'
 
@@ -59,20 +58,6 @@ export class MseController {
     }
 
     return handle
-  }
-
-  async appendFixture(fixture: M1StaticFmp4Fixture): Promise<void> {
-    const mediaSource = this.mediaSource
-    if (mediaSource === undefined) {
-      throw new Error('MediaSource has not been created.')
-    }
-
-    await waitForSourceOpen(mediaSource)
-
-    const queue = this.ensureQueue('video', fixture.mimeType)
-    await queue.append(fixture.initSegment)
-    await queue.append(fixture.mediaSegment)
-    mediaSource.duration = fixture.duration
   }
 
   async appendInitSegment(segment: CoreInitSegment): Promise<void> {
