@@ -3,19 +3,23 @@ import { TransmuxCore as BundledTransmuxCore } from '@rivmux/transmux-core'
 
 import type { TransmuxCoreHost, TransmuxCoreWasmConstructor } from './rivmux-transmux-wasm'
 
-export type CreateTransmuxCoreHost = () => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
+export type CreateTransmuxCoreHost = () => TransmuxCoreHost | Promise<TransmuxCoreHost>
 
 type WasmBindgenModule = {
   default: (input?: string | URL | Request | Response | BufferSource | WebAssembly.Module) => Promise<unknown>
   TransmuxCore: TransmuxCoreWasmConstructor
 }
 
-export function createWasmTransmuxCoreHost(Core: TransmuxCoreWasmConstructor | undefined): TransmuxCoreHost | undefined {
-  return Core === undefined ? undefined : new WasmTransmuxCoreHost(Core)
+export function createWasmTransmuxCoreHost(Core: TransmuxCoreWasmConstructor | undefined): TransmuxCoreHost {
+  if (Core === undefined) {
+    throw new TypeError('WASM transmux core constructor is not available.')
+  }
+
+  return new WasmTransmuxCoreHost(Core)
 }
 
 export function createBundledWasmTransmuxCoreHost(): TransmuxCoreHost {
-  return new WasmTransmuxCoreHost(BundledTransmuxCore)
+  return createWasmTransmuxCoreHost(BundledTransmuxCore)
 }
 
 export async function loadWasmTransmuxCoreHost(wasmUrl: string | undefined): Promise<TransmuxCoreHost> {
@@ -26,7 +30,7 @@ export async function loadWasmTransmuxCoreHost(wasmUrl: string | undefined): Pro
   const module = await nativeDynamicImport(toWasmBindgenGlueUrl(wasmUrl))
   const wasmModule = normalizeWasmBindgenModule(module)
   await wasmModule.default(wasmUrl)
-  return new WasmTransmuxCoreHost(wasmModule.TransmuxCore)
+  return createWasmTransmuxCoreHost(wasmModule.TransmuxCore)
 }
 
 export function toWasmBindgenGlueUrl(wasmUrl: string): string {

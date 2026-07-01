@@ -112,9 +112,13 @@ describe('runtime transmux core host', () => {
     expect(MockWasmTransmuxCore.instance?.destroyCount).toBe(1)
   })
 
-  it('keeps optional wasm host creation for tests and fallback paths', () => {
-    expect(createWasmTransmuxCoreHost(undefined)).toBeUndefined()
+  it('creates wasm host when the constructor is available', () => {
     expect(createWasmTransmuxCoreHost(MockWasmTransmuxCore)).toBeInstanceOf(WasmTransmuxCoreHost)
+  })
+
+  it('throws when the wasm host constructor is missing', () => {
+    expect(() => createWasmTransmuxCoreHost(undefined)).toThrow(TypeError)
+    expect(() => createWasmTransmuxCoreHost(undefined)).toThrow('WASM transmux core constructor is not available.')
   })
 
   it('resolves wasm-bindgen glue next to the wasm asset', () => {
