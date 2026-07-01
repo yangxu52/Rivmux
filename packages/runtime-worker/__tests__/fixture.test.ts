@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createM1StaticFmp4Fixture, M1_VIDEO_MIME } from '../src/fixtures/m1-static-fmp4'
+import { createM1StaticFmp4Fixture, M1_VIDEO_MIME } from '../../../tests/fixtures/m1-static-fmp4'
 
 describe('M1 static fMP4 fixture', () => {
   it('exposes known-good init and media segments', () => {

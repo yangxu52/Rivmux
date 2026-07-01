@@ -12,6 +12,6 @@ describe('runtime worker entry smoke', () => {
     const module = await import('../src/worker-entry')
 
     expect(module.RuntimeWorker).toBeDefined()
-    expect(module.createM1StaticFmp4Fixture).toBeDefined()
+    expect('createM1StaticFmp4Fixture' in module).toBe(false)
   })
 })

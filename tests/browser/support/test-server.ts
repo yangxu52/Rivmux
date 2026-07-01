@@ -1,4 +1,4 @@
-import { createM1StaticFmp4Fixture } from '../../../packages/runtime-worker/src/fixtures/m1-static-fmp4'
+import { createM1StaticFmp4Fixture } from '../../fixtures/m1-static-fmp4'
 
 import type { Plugin } from 'vitest/config'
 
