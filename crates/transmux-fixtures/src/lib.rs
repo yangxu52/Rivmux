@@ -1,1 +1,1 @@
-//! Fixture helpers crate for Rivmux transmux tests.
+//! Reserved fixture helpers crate for future deterministic transmux tests.

@@ -14,10 +14,10 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 
 ## Crates
 
-| Crate                      | 目录                                                     | 说明                       |
-| -------------------------- | -------------------------------------------------------- | -------------------------- |
-| `rivmux_transmux_core`     | [`crates/transmux-core`](./crates/transmux-core)         | Rust transmux core crate.  |
-| `rivmux_transmux_fixtures` | [`crates/transmux-fixtures`](./crates/transmux-fixtures) | Fixture helpers for tests. |
+| Crate                      | 目录                                                     | 说明                               |
+| -------------------------- | -------------------------------------------------------- | ---------------------------------- |
+| `rivmux_transmux_core`     | [`crates/transmux-core`](./crates/transmux-core)         | Rust transmux core crate.          |
+| `rivmux_transmux_fixtures` | [`crates/transmux-fixtures`](./crates/transmux-fixtures) | Reserved fixture generation crate. |
 
 ## Development
 

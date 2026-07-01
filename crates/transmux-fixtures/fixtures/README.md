@@ -1,3 +1,6 @@
 # Rivmux Transmux Fixtures
 
-Binary fixtures for transmux tests will live here.
+Reserved directory for generated binary fixtures.
+
+Add files here only with deterministic generation steps or provenance notes
+that explain how to regenerate and validate the fixture bytes.
