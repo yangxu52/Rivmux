@@ -53,10 +53,7 @@ export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): Norma
         ...options.network?.retry,
       },
     },
-    runtime: {
-      ...DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime,
-      ...options.runtime,
-    },
+    runtime: normalizeRuntimeOptions(options),
     diagnostics: {
       ...DEFAULT_RIVMUX_PLAYER_OPTIONS.diagnostics,
       ...options.diagnostics,
@@ -98,9 +95,13 @@ function validateRuntimeOptions(options: NormalizedRivmuxPlayerOptions): void {
       'Main-thread MSE fallback is not implemented; runtime.preferWorkerMse must remain true.'
     )
   }
+}
 
-  if (options.runtime.wasmModule !== undefined) {
-    throwOptionError('unsupported', 'RIVMUX_UNSUPPORTED_WASM_MODULE_OPTION', 'runtime.wasmModule is reserved and is not implemented by the default runtime.')
+function normalizeRuntimeOptions(options: RivmuxPlayerOptions): NormalizedRivmuxPlayerOptions['runtime'] {
+  return {
+    preferWorkerMse: options.runtime?.preferWorkerMse ?? DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime.preferWorkerMse,
+    ...(options.runtime?.workerUrl === undefined ? {} : { workerUrl: options.runtime.workerUrl }),
+    ...(options.runtime?.wasmUrl === undefined ? {} : { wasmUrl: options.runtime.wasmUrl }),
   }
 }
 

@@ -52,7 +52,6 @@ describe('normalizePlayerOptions', () => {
 
   it('rejects runtime options that are not implemented by the M1 pipeline', () => {
     expectOptionError({ runtime: { preferWorkerMse: false } }, 'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK')
-    expectOptionError({ runtime: { wasmModule: {} as WebAssembly.Module } }, 'RIVMUX_UNSUPPORTED_WASM_MODULE_OPTION')
   })
 })
 

@@ -45,7 +45,7 @@ export type NetworkOptions = {
 
 /** Runtime asset and worker selection options. */
 export type RuntimeOptions = {
-  /** Prefer worker-backed Media Source Extensions when supported. */
+  /** Must remain true while M1 supports only worker-backed Media Source Extensions. */
   preferWorkerMse?: boolean
 
   /** Overrides the worker script URL used by the default runtime. */
@@ -56,9 +56,6 @@ export type RuntimeOptions = {
    * be available at the same path with `.js` instead of `.wasm`.
    */
   wasmUrl?: string
-
-  /** Precompiled WASM module for custom runtime integrations. */
-  wasmModule?: WebAssembly.Module
 }
 
 /** Diagnostics and debug reporting options. */
@@ -96,7 +93,6 @@ export type NormalizedRuntimeOptions = {
   preferWorkerMse: boolean
   workerUrl?: string
   wasmUrl?: string
-  wasmModule?: WebAssembly.Module
 }
 
 export type NormalizedDiagnosticsOptions = Required<DiagnosticsOptions>

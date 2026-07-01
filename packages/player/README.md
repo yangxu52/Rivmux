@@ -6,6 +6,9 @@ Public browser player facade for Rivmux low-latency live playback.
 audio/video into fragmented MP4, and attaches the resulting media stream to a
 browser `<video>` element.
 
+M1 supports only the dedicated-worker MSE runtime path. Main-thread MSE and
+custom precompiled WASM module injection are not exposed runtime capabilities.
+
 ## Install
 
 ```sh
@@ -141,10 +144,9 @@ Values are in seconds.
 
 | Option            | Default             | Description                                                                                                                                         |
 | ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preferWorkerMse` | `true`              | Prefers the worker-backed MSE pipeline when the browser supports it.                                                                                |
+| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                                                                              |
 | `workerUrl`       | bundled worker URL  | Overrides the worker script URL. Use this when serving worker assets from a fixed public path.                                                      |
 | `wasmUrl`         | bundled WASM module | Overrides the WASM asset URL. If provided, the matching wasm-bindgen JS glue file must be available at the same path with `.js` instead of `.wasm`. |
-| `wasmModule`      | `undefined`         | Reserved for custom runtime integrations that provide a precompiled `WebAssembly.Module`.                                                           |
 
 ### `diagnostics`
 
