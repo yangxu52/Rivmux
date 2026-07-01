@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.0](https://github.com/yangxu52/rivmux/compare/v0.1.0...v0.2.0) (2026-07-01)
+
+### Features
+
+- normalize transmux timestamps ([fdc5c35](https://github.com/yangxu52/rivmux/commit/fdc5c35f0872d98a0502e2622a8616eb317ccb14))
+
+### Bug Fixes
+
+- retry mse appends after quota cleanup ([5108a9d](https://github.com/yangxu52/rivmux/commit/5108a9d7cc0fa89e4bbcf89c1699c744fc805f4a))
+- validate runtime capabilities and options ([ec8250e](https://github.com/yangxu52/rivmux/commit/ec8250eee0ddc895f0708dea144241f338dbd0b0))
+
+### Documentation
+
+- expand player usage docs ([2d66e9d](https://github.com/yangxu52/rivmux/commit/2d66e9dc2817431a73289621cbe91b3e53a23577))
+
+### Miscellaneous Chores
+
+- add playback playground ([1b7d6dc](https://github.com/yangxu52/rivmux/commit/1b7d6dc6ded61e6b48e08bcc9b471bc841360030))
+
+### Code Refactoring
+
+- narrow transmux core public surface ([3e60fce](https://github.com/yangxu52/rivmux/commit/3e60fcec46f400bbffb461ef23c824ce1320b439))
+- standardize transmux core module names ([1039f3b](https://github.com/yangxu52/rivmux/commit/1039f3b670d9ae1187907bb39e43e603e2f00c9c))
+
+### Tests
+
+- cover published declaration resolution ([eb00860](https://github.com/yangxu52/rivmux/commit/eb00860a9bf415727b76cbf97325972a96f817fb))
+
 ## 0.1.0 (2026-06-29)
 
 ### Features

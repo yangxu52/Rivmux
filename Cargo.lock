@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "rivmux_transmux_core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "rivmux_transmux_fixtures"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "rustversion"
