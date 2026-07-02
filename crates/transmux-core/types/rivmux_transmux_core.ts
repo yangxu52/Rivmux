@@ -5,5 +5,6 @@ type TransmuxCoreWasmConstructor = new () => {
   destroy(): void
 }
 
+// eslint-disable-next-line
 let wasm: TransmuxCoreWasmConstructor
 export { wasm as TransmuxCore }
