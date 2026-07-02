@@ -2,8 +2,8 @@ mod support;
 
 use rivmux_transmux_core::{CoreConfig, CoreEvent, TrackKind, TransmuxCore};
 use support::{
-    build_flv, drain, find_box, minimal_avcc, read_box_type, video_sample_tag,
-    video_sequence_header_tag,
+    baseline_320x240_avcc, build_flv, drain, find_box, minimal_avcc, read_box_type,
+    video_sample_tag, video_sequence_header_tag,
 };
 
 #[test]
@@ -125,6 +125,37 @@ fn uses_non_40ms_video_dts_delta_for_sample_duration() {
     assert_eq!(read_trun_sample_duration(&media[0].bytes), 50);
 }
 
+#[test]
+fn writes_sps_dimensions_to_media_info_and_avc1_sample_entry() {
+    let input = build_flv(vec![
+        video_sequence_header_tag(&baseline_320x240_avcc()),
+        video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(33, false, 0, &[0x00, 0x00, 0x00, 0x01, 0x41]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::MediaInfo(info)
+                if info.width == Some(320)
+                    && info.height == Some(240)
+        )
+    }));
+
+    let init = events
+        .iter()
+        .find_map(|event| match event {
+            CoreEvent::InitSegment(segment) if segment.track == TrackKind::Video => Some(segment),
+            _ => None,
+        })
+        .expect("expected video init segment");
+    assert_eq!(read_avc1_dimensions(&init.bytes), (320, 240));
+}
+
 fn video_media_segments(events: &[CoreEvent]) -> Vec<&rivmux_transmux_core::MediaSegment> {
     events
         .iter()
@@ -138,4 +169,12 @@ fn video_media_segments(events: &[CoreEvent]) -> Vec<&rivmux_transmux_core::Medi
 fn read_trun_sample_duration(bytes: &[u8]) -> u32 {
     let offset = find_box(bytes, b"trun").expect("expected trun box");
     u32::from_be_bytes(bytes[offset + 20..offset + 24].try_into().unwrap())
+}
+
+fn read_avc1_dimensions(bytes: &[u8]) -> (u16, u16) {
+    let offset = find_box(bytes, b"avc1").expect("expected avc1 box");
+    (
+        u16::from_be_bytes(bytes[offset + 32..offset + 34].try_into().unwrap()),
+        u16::from_be_bytes(bytes[offset + 34..offset + 36].try_into().unwrap()),
+    )
 }

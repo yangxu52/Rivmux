@@ -38,13 +38,15 @@ describe('Rivmux browser runtime', () => {
       )
       await waitForCoreSignal(errors, () => stats.some((entry) => isRecord(entry) && typeof entry.outputBytes === 'number' && entry.outputBytes > 0))
       expect(errors).toStrictEqual([])
-      expect(mediaInfo).toContainEqual({
-        container: 'flv',
-        videoCodec: 'avc1.42C01E',
-        audioCodec: 'mp4a.40.2',
-        audioSampleRate: 44_100,
-        audioChannelCount: 2,
-      })
+      expect(mediaInfo).toContainEqual(
+        expect.objectContaining({
+          container: 'flv',
+          videoCodec: 'avc1.42C01E',
+          audioCodec: 'mp4a.40.2',
+          audioSampleRate: 44_100,
+          audioChannelCount: 2,
+        })
+      )
       expect(stats).toContainEqual(
         expect.objectContaining({
           outputBytes: expect.any(Number),
