@@ -53,6 +53,7 @@ fn emits_separate_video_and_audio_segments_for_avc_aac_flv() {
         video_sequence_header_tag(&minimal_avcc()),
         audio_sequence_header_tag(&[0x12, 0x10]),
         video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(40, false, 0, &[0x00, 0x00, 0x00, 0x01, 0x41]),
         audio_sample_tag(0, &[0x21, 0x22, 0x23, 0x24]),
     ]);
     let mut core = TransmuxCore::new(CoreConfig::default());
@@ -95,6 +96,7 @@ fn keeps_separate_source_buffer_strategy_when_audio_config_arrives_after_video_m
     let input = build_flv(vec![
         video_sequence_header_tag(&minimal_avcc()),
         video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(40, false, 0, &[0x00, 0x00, 0x00, 0x01, 0x41]),
         audio_sequence_header_tag(&[0x12, 0x10]),
         audio_sample_tag(0, &[0x21, 0x22, 0x23, 0x24]),
     ]);

@@ -8,6 +8,7 @@ fn normalizes_media_segments_to_first_media_dts() {
     let input = build_flv(vec![
         video_sequence_header_tag(&minimal_avcc()),
         video_sample_tag(5_000, true, 10, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(5_033, false, 10, &[0x00, 0x00, 0x00, 0x01, 0x41]),
     ]);
     let mut core = TransmuxCore::new(CoreConfig::default());
 
@@ -27,7 +28,7 @@ fn normalizes_media_segments_to_first_media_dts() {
             event,
             CoreEvent::MediaSegment(segment)
                 if segment.dts_start_ms == 0
-                    && segment.dts_end_ms == 40
+                    && segment.dts_end_ms == 33
         )
     }));
 }

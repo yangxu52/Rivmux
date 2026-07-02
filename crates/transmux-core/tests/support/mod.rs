@@ -105,7 +105,7 @@ fn find_box_from(bytes: &[u8], name: &[u8; 4], start: usize) -> Option<usize> {
 
         if matches!(
             &bytes[offset + 4..offset + 8],
-            b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl"
+            b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"moof" | b"traf"
         ) && let Some(child_offset) = find_box(&bytes[offset + 8..offset + size], name)
         {
             return Some(offset + 8 + child_offset);

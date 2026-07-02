@@ -108,7 +108,7 @@ fn mdat(data: &[u8]) -> Vec<u8> {
 }
 
 pub(super) fn sample_duration(sample: &VideoSample) -> u32 {
-    sample.timing.duration_ms.unwrap_or(40).max(1) as u32
+    sample.timing.duration_ms.unwrap_or(1).max(1) as u32
 }
 
 pub(super) fn audio_sample_duration(sample: &AudioSample) -> u32 {
