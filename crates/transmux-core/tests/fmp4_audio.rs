@@ -48,7 +48,7 @@ fn emits_aac_init_and_media_segment() {
 }
 
 #[test]
-fn emits_video_and_audio_segments_for_avc_aac_flv() {
+fn emits_separate_video_and_audio_segments_for_avc_aac_flv() {
     let input = build_flv(vec![
         video_sequence_header_tag(&minimal_avcc()),
         audio_sequence_header_tag(&[0x12, 0x10]),
@@ -60,27 +60,95 @@ fn emits_video_and_audio_segments_for_avc_aac_flv() {
     core.push_chunk(&input).unwrap();
     let events = drain(&mut core);
 
-    let muxed_init = events
+    let video_init = events
         .iter()
         .find_map(|event| match event {
-            CoreEvent::InitSegment(segment) if segment.track == TrackKind::Muxed => Some(segment),
+            CoreEvent::InitSegment(segment) if segment.track == TrackKind::Video => Some(segment),
             _ => None,
         })
-        .expect("expected muxed init segment");
+        .expect("expected video init segment");
+    let audio_init = events
+        .iter()
+        .find_map(|event| match event {
+            CoreEvent::InitSegment(segment) if segment.track == TrackKind::Audio => Some(segment),
+            _ => None,
+        })
+        .expect("expected audio init segment");
 
-    assert_eq!(muxed_init.codec, "avc1.42E01E, mp4a.40.2");
-    assert!(find_box(&muxed_init.bytes, b"avcC").is_some());
-    assert!(find_box(&muxed_init.bytes, b"esds").is_some());
-    assert!(events.iter().any(|event| {
-        matches!(
-            event,
-            CoreEvent::MediaSegment(segment) if segment.track == TrackKind::Video
-        )
-    }));
-    assert!(events.iter().any(|event| {
-        matches!(
-            event,
-            CoreEvent::MediaSegment(segment) if segment.track == TrackKind::Audio
-        )
-    }));
+    assert_eq!(video_init.codec, "avc1.42E01E");
+    assert_eq!(audio_init.codec, "mp4a.40.2");
+    assert!(find_box(&video_init.bytes, b"avcC").is_some());
+    assert!(find_box(&audio_init.bytes, b"esds").is_some());
+    assert_eq!(
+        emitted_init_tracks(&events),
+        vec![TrackKind::Video, TrackKind::Audio]
+    );
+    assert_eq!(
+        emitted_media_tracks(&events),
+        vec![TrackKind::Video, TrackKind::Audio]
+    );
+    assert!(!events.iter().any(is_muxed_init_or_media_segment));
+}
+
+#[test]
+fn keeps_separate_source_buffer_strategy_when_audio_config_arrives_after_video_media() {
+    let input = build_flv(vec![
+        video_sequence_header_tag(&minimal_avcc()),
+        video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        audio_sequence_header_tag(&[0x12, 0x10]),
+        audio_sample_tag(0, &[0x21, 0x22, 0x23, 0x24]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert_eq!(
+        emitted_segment_order(&events),
+        vec![
+            ("init", TrackKind::Video),
+            ("media", TrackKind::Video),
+            ("init", TrackKind::Audio),
+            ("media", TrackKind::Audio),
+        ]
+    );
+}
+
+fn emitted_init_tracks(events: &[CoreEvent]) -> Vec<TrackKind> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::InitSegment(segment) => Some(segment.track),
+            _ => None,
+        })
+        .collect()
+}
+
+fn emitted_media_tracks(events: &[CoreEvent]) -> Vec<TrackKind> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::MediaSegment(segment) => Some(segment.track),
+            _ => None,
+        })
+        .collect()
+}
+
+fn emitted_segment_order(events: &[CoreEvent]) -> Vec<(&'static str, TrackKind)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::InitSegment(segment) => Some(("init", segment.track)),
+            CoreEvent::MediaSegment(segment) => Some(("media", segment.track)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn is_muxed_init_or_media_segment(event: &CoreEvent) -> bool {
+    match event {
+        CoreEvent::InitSegment(segment) => segment.track == TrackKind::Muxed,
+        CoreEvent::MediaSegment(segment) => segment.track == TrackKind::Muxed,
+        _ => false,
+    }
 }

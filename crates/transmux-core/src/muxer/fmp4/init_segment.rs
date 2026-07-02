@@ -25,16 +25,6 @@ pub(super) fn build_audio_init_segment(config: &AudioConfig) -> Vec<u8> {
     concat_box(vec![ftyp(&[b"mp4a"]), audio_moov(config)])
 }
 
-pub(super) fn build_muxed_init_segment(
-    video_config: &VideoConfig,
-    audio_config: &AudioConfig,
-) -> Vec<u8> {
-    concat_box(vec![
-        ftyp(&[b"avc1", b"mp4a"]),
-        muxed_moov(video_config, audio_config),
-    ])
-}
-
 fn ftyp(codec_brands: &[&[u8; 4]]) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(b"iso6");
@@ -66,18 +56,6 @@ fn audio_moov(config: &AudioConfig) -> Vec<u8> {
             mvhd(config.sample_rate, AUDIO_TRACK_ID + 1),
             audio_trak(config),
             mvex(&[AUDIO_TRACK_ID]),
-        ]),
-    )
-}
-
-fn muxed_moov(video_config: &VideoConfig, audio_config: &AudioConfig) -> Vec<u8> {
-    write_box(
-        b"moov",
-        concat_box(vec![
-            mvhd(VIDEO_TIMESCALE, AUDIO_TRACK_ID + 1),
-            video_trak(video_config),
-            audio_trak(audio_config),
-            mvex(&[VIDEO_TRACK_ID, AUDIO_TRACK_ID]),
         ]),
     )
 }

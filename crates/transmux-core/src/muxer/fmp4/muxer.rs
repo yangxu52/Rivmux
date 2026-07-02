@@ -3,8 +3,7 @@ use crate::codec::avc::VideoConfig;
 use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, InitSegment, MediaSegment, TrackKind};
 use crate::muxer::fmp4::init_segment::{
-    audio_timescale, build_audio_init_segment, build_muxed_init_segment, build_video_init_segment,
-    video_timescale,
+    audio_timescale, build_audio_init_segment, build_video_init_segment, video_timescale,
 };
 use crate::muxer::fmp4::media_segment::{
     audio_sample_duration_ms, build_audio_media_segment, build_video_media_segment, sample_duration,
@@ -18,36 +17,31 @@ pub(crate) struct Fmp4Muxer {
     next_video_sequence_number: u32,
     next_audio_sequence_number: u32,
     video_started: bool,
-    init_segment_mode: InitSegmentMode,
+    video_init_emitted: bool,
+    audio_init_emitted: bool,
 }
 
 impl Fmp4Muxer {
     pub(crate) fn on_video_config(
         &mut self,
         config: VideoConfig,
-        out: &mut Vec<CoreEvent>,
+        _out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
         self.video_config = Some(config);
         self.next_video_sequence_number = 1;
         self.video_started = false;
-        self.init_segment_mode = InitSegmentMode::None;
-        if self.audio_config.is_some() {
-            self.emit_muxed_init_segment(out);
-        }
+        self.video_init_emitted = false;
         Ok(())
     }
 
     pub(crate) fn on_audio_config(
         &mut self,
         config: AudioConfig,
-        out: &mut Vec<CoreEvent>,
+        _out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
         self.audio_config = Some(config);
         self.next_audio_sequence_number = 1;
-        self.init_segment_mode = InitSegmentMode::None;
-        if self.video_config.is_some() {
-            self.emit_muxed_init_segment(out);
-        }
+        self.audio_init_emitted = false;
         Ok(())
     }
 
@@ -117,27 +111,19 @@ impl Fmp4Muxer {
     }
 
     fn ensure_video_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
-        if self.init_segment_mode != InitSegmentMode::None {
+        if self.video_init_emitted {
             return;
         }
 
-        if self.audio_config.is_some() {
-            self.emit_muxed_init_segment(out);
-        } else {
-            self.emit_video_init_segment(out);
-        }
+        self.emit_video_init_segment(out);
     }
 
     fn ensure_audio_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
-        if self.init_segment_mode != InitSegmentMode::None {
+        if self.audio_init_emitted {
             return;
         }
 
-        if self.video_config.is_some() {
-            self.emit_muxed_init_segment(out);
-        } else {
-            self.emit_audio_init_segment(out);
-        }
+        self.emit_audio_init_segment(out);
     }
 
     fn emit_video_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
@@ -151,7 +137,7 @@ impl Fmp4Muxer {
             timescale: video_timescale(),
             bytes: build_video_init_segment(config),
         }));
-        self.init_segment_mode = InitSegmentMode::Video;
+        self.video_init_emitted = true;
     }
 
     fn emit_audio_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
@@ -165,37 +151,10 @@ impl Fmp4Muxer {
             timescale: audio_timescale(config),
             bytes: build_audio_init_segment(config),
         }));
-        self.init_segment_mode = InitSegmentMode::Audio;
-    }
-
-    fn emit_muxed_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
-        let (Some(video_config), Some(audio_config)) = (&self.video_config, &self.audio_config)
-        else {
-            return;
-        };
-
-        out.push(CoreEvent::InitSegment(InitSegment {
-            track: TrackKind::Muxed,
-            codec: format!(
-                "{}, {}",
-                video_config.codec_string, audio_config.codec_string
-            ),
-            timescale: video_timescale(),
-            bytes: build_muxed_init_segment(video_config, audio_config),
-        }));
-        self.init_segment_mode = InitSegmentMode::Muxed;
+        self.audio_init_emitted = true;
     }
 
     pub(crate) fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum InitSegmentMode {
-    #[default]
-    None,
-    Video,
-    Audio,
-    Muxed,
 }
