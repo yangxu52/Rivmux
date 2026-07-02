@@ -56,6 +56,9 @@ export type RuntimeOptions = {
    * be available at the same path with `.js` instead of `.wasm`.
    */
   wasmUrl?: string
+
+  /** Reserved for future custom runtime integrations and rejected by M1. */
+  wasmModule?: WebAssembly.Module
 }
 
 /** Diagnostics and debug reporting options. */

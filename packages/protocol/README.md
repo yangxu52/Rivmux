@@ -1,3 +1,3 @@
-# Rivmux Shared
+# Rivmux Protocol
 
-Shared TypeScript contracts used by Rivmux browser packages.
+Protocol TypeScript contracts used by Rivmux browser packages.
