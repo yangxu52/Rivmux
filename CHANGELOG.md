@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0](https://github.com/yangxu52/rivmux/compare/v0.2.0...v0.3.0) (2026-07-02)
+
+### Bug Fixes
+
+- lint config and enforce LF line endings ([a33351e](https://github.com/yangxu52/rivmux/commit/a33351edd6f0bf24debab3eb3ccf2056887fe5c1))
+- require transmux core in runtime ([02142c3](https://github.com/yangxu52/rivmux/commit/02142c31c64699fa988034abe01ae4259b8cc472))
+
+### Miscellaneous Chores
+
+- add repository info to packages ([4e3cd95](https://github.com/yangxu52/rivmux/commit/4e3cd95d236a764787e05de333d5969bec13fde0))
+- specify the build target to es2022 ([ec7cb0b](https://github.com/yangxu52/rivmux/commit/ec7cb0bbd9959aec9917fabcc5d7c3e59b74f6ac))
+- update non-major dependencies ([36d93cd](https://github.com/yangxu52/rivmux/commit/36d93cd1e356c849fb7157f1a70ded41706f9423))
+
+### Code Refactoring
+
+- generalize mse mime requirements ([540bcff](https://github.com/yangxu52/rivmux/commit/540bcff4b05694ed6cb76556fa2de67597b49954))
+- remove optional wasm host fallback ([1cf043c](https://github.com/yangxu52/rivmux/commit/1cf043c1ba2e3e82cf37acd8b22771bc415f0018))
+- remove unimplemented runtime options ([5620832](https://github.com/yangxu52/rivmux/commit/562083214de1185e204571ac9393763a2344ed19))
+
+### Tests
+
+- clarify fixture ownership ([d7d49b2](https://github.com/yangxu52/rivmux/commit/d7d49b21deee11f5c6ac478245edb1f1e4db9157))
+- isolate static media fixtures ([05561cc](https://github.com/yangxu52/rivmux/commit/05561cc46a8c6482814bdd540920a828532a6f28))
+
 ## [0.2.0](https://github.com/yangxu52/rivmux/compare/v0.1.0...v0.2.0) (2026-07-01)
 
 ### Features

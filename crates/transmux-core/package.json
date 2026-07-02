@@ -1,6 +1,6 @@
 {
   "name": "@rivmux/transmux-core",
-  "version": "0.0.1",
+  "version": "0.3.0",
   "description": "Private TypeScript workspace wrapper for the Rivmux transmux WASM core.",
   "homepage": "https://github.com/yangxu52/Rivmux/tree/main/crates/transmux-core",
   "bugs": {
