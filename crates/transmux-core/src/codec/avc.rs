@@ -316,28 +316,6 @@ fn invalid_sps(message: impl Into<String>) -> CoreError {
     CoreError::new(CoreErrorCode::InvalidCodecConfig, message)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_avc_decoder_configuration_record;
-
-    #[test]
-    fn parses_baseline_sps_dimensions() {
-        let config = parse_avc_decoder_configuration_record(&baseline_320x240_avcc()).unwrap();
-
-        assert_eq!(config.codec_string, "avc1.42C01E");
-        assert_eq!(config.width, Some(320));
-        assert_eq!(config.height, Some(240));
-    }
-
-    fn baseline_320x240_avcc() -> Vec<u8> {
-        vec![
-            1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0x00, 0x16, 0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x05, 0x07,
-            0xEC, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0F, 0x23, 0xC5, 0x8B,
-            0xA8, 0x01, 0x00, 0x04, 0x68, 0xCE, 0x0F, 0xC8,
-        ]
-    }
-}
-
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, CoreError> {
     ensure_available(data, offset, 2, "u16")?;
     Ok(u16::from_be_bytes([data[offset], data[offset + 1]]))
@@ -360,4 +338,26 @@ fn ensure_available(
         CoreErrorCode::InvalidCodecConfig,
         format!("AVC configuration has truncated {field}."),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_avc_decoder_configuration_record;
+
+    #[test]
+    fn parses_baseline_sps_dimensions() {
+        let config = parse_avc_decoder_configuration_record(&baseline_320x240_avcc()).unwrap();
+
+        assert_eq!(config.codec_string, "avc1.42C01E");
+        assert_eq!(config.width, Some(320));
+        assert_eq!(config.height, Some(240));
+    }
+
+    fn baseline_320x240_avcc() -> Vec<u8> {
+        vec![
+            1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0x00, 0x16, 0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x05, 0x07,
+            0xEC, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0F, 0x23, 0xC5, 0x8B,
+            0xA8, 0x01, 0x00, 0x04, 0x68, 0xCE, 0x0F, 0xC8,
+        ]
+    }
 }
