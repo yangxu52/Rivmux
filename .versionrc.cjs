@@ -9,6 +9,7 @@ module.exports = {
     { filename: './packages/runtime-worker/package.json', type: 'json' },
     { filename: './packages/player/package.json', type: 'json' },
     { filename: './packages/protocol/package.json', type: 'json' },
+    { filename: './crates/transmux-core/package.json', type: 'json' },
     { filename: './Cargo.toml', updater: './scripts/crates-version-updater.cjs' },
   ],
   types: [

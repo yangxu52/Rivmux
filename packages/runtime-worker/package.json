@@ -2,6 +2,15 @@
   "name": "@rivmux/runtime-worker",
   "version": "0.2.0",
   "description": "Dedicated Worker runtime package for Rivmux.",
+  "homepage": "https://www.npmjs.com/package/@rivmux/runtime-worker",
+  "bugs": {
+    "url": "https://github.com/yangxu52/Rivmux/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yangxu52/Rivmux.git",
+    "directory": "packages/runtime-worker"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
