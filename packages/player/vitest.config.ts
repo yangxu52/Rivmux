@@ -12,6 +12,10 @@ export default defineConfig({
         find: '@rivmux/runtime-worker',
         replacement: fileURLToPath(new URL(`../../packages/runtime-worker/src/index.ts`, import.meta.url)),
       },
+      {
+        find: '@rivmux/transmux-core',
+        replacement: fileURLToPath(new URL(`../../packages/runtime-worker/__tests__/stubs/rivmux-transmux-core.ts`, import.meta.url)),
+      },
     ],
   },
   test: {
