@@ -12,6 +12,7 @@ export default defineConfig({
       targetEnv: 'browser',
     }),
   ],
+  target: 'es2022',
   format: 'esm',
   platform: 'browser',
   deps: {

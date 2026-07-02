@@ -10,7 +10,7 @@
   "author": "yangxu52",
   "scripts": {
     "build": "pnpm run build:crates && pnpm run build:packages",
-    "build:release": "pnpm run build:wasm && pnpm run build:packages",
+    "build:release": "pnpm run clean && pnpm run build:wasm && pnpm run build:packages",
     "build:packages": "pnpm -r --filter './packages/*' run build",
     "build:crates": "cargo build --workspace",
     "build:wasm": "pnpm --filter @rivmux/transmux-core run build:release",

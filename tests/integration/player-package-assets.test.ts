@@ -71,7 +71,7 @@ function compileConsumerTypes(): readonly ts.Diagnostic[] {
     noEmit: true,
     skipLibCheck: true,
     strict: true,
-    target: ts.ScriptTarget.ES2020,
+    target: ts.ScriptTarget.ES2022,
   }
   const host = ts.createCompilerHost(options)
   const readHostFile = host.readFile.bind(host)
