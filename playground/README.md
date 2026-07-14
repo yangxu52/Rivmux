@@ -18,10 +18,10 @@ pnpm --filter rivmux-playground dev
 
 ## 生产构建
 
-先执行 `pnpm run build` 生成上游包，再执行：
+执行：
 
 ```bash
-pnpm --filter rivmux-playground build
+pnpm run build:playground
 ```
 
 Vite 会自动在 `dist/assets` 输出带哈希的 `rivmux-transmux-core-*.wasm`；应用使用 `rivmux` 时不需要额外复制或配置该二进制。

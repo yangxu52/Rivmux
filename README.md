@@ -43,5 +43,7 @@ pnpm run typecheck
 pnpm run clippy
 pnpm run test
 pnpm run build
+pnpm run build:release
+pnpm run build:playground
 pnpm run clean
 ```

@@ -30,7 +30,7 @@
   "types": "./dist/rivmux_transmux_core.d.ts",
   "scripts": {
     "build": "wasm-pack build --no-opt --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
-    "build:release": "RUSTFLAGS='-C target-feature=+simd128' wasm-pack build --release --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
+    "build:release": "wasm-pack build --release --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
     "clean": "rimraf dist node_modules/.tmp",
     "typecheck": "tsc -b"
   },
