@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0](https://github.com/yangxu52/rivmux/compare/v0.3.0...v0.4.0) (2026-07-14)
+
+### Features
+
+- remove wasm module runtime option ([7328f6e](https://github.com/yangxu52/rivmux/commit/7328f6e9c09a5de76c1c0421edc711eb0f3d5557))
+
+### Bug Fixes
+
+- infer video sample durations ([692bc22](https://github.com/yangxu52/rivmux/commit/692bc227ac1f249db5df4afb795ed97e961dfcf1))
+- parse avc sps dimensions ([ba6cff8](https://github.com/yangxu52/rivmux/commit/ba6cff8cb82766b98c1c66ffdbcca48ac06cf212))
+- reject reserved wasm runtime option ([7ea068a](https://github.com/yangxu52/rivmux/commit/7ea068ab35d408d61a32032379b46bf53b6f408f))
+- use separate av source buffers ([b98df8c](https://github.com/yangxu52/rivmux/commit/b98df8c6ae49d07a532ad7a83e7f12852c557d30))
+- emit asset for vite builds ([cc4489e](https://github.com/yangxu52/rivmux/commit/cc4489e25990d80d2a273abdb4f20cbc7defc55a))
+
+### Miscellaneous Chores
+
+- adjust style and script ([786af9f](https://github.com/yangxu52/rivmux/commit/786af9f267501f0f506006675aca1e97c6f7ed3f))
+- update non-major dependencies ([b24fd81](https://github.com/yangxu52/rivmux/commit/b24fd81736c5c26a62a821531ea36e9421e813b0))
+
+### Tests
+
+- cover static fmp4 worker mse path ([c4117df](https://github.com/yangxu52/rivmux/commit/c4117df604568214bd47f2e5425c774f9f37938c))
+- satisfy avc clippy layout ([7ca8bcb](https://github.com/yangxu52/rivmux/commit/7ca8bcb8b22b2d24706e396a05b17255344e37c5))
+
 ## [0.3.0](https://github.com/yangxu52/rivmux/compare/v0.2.0...v0.3.0) (2026-07-02)
 
 ### Bug Fixes
