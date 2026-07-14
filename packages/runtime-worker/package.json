@@ -39,7 +39,7 @@
     "@rivmux/protocol": "workspace:*"
   },
   "devDependencies": {
-    "rolldown-plugin-wasm": "^0.3.2",
+    "@rivmux/transmux-core": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

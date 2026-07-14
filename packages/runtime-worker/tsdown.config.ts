@@ -1,16 +1,15 @@
 import { defineConfig } from 'tsdown'
-import { wasm } from 'rolldown-plugin-wasm'
 
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'rivmux-runtime-worker': 'src/worker-entry.ts',
   },
-  plugins: [
-    wasm({
-      fileName: 'rivmux-transmux-core[extname]',
-      targetEnv: 'browser',
-    }),
+  copy: [
+    {
+      from: '../../crates/transmux-core/dist/rivmux_transmux_core_bg.wasm',
+      rename: 'rivmux-transmux-core.wasm',
+    },
   ],
   target: 'es2022',
   format: 'esm',

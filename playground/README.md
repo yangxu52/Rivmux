@@ -16,6 +16,16 @@ pnpm --filter rivmux-playground dev
 
 默认访问：`http://localhost:5173`
 
+## 生产构建
+
+先执行 `pnpm run build` 生成上游包，再执行：
+
+```bash
+pnpm --filter rivmux-playground build
+```
+
+Vite 会自动在 `dist/assets` 输出带哈希的 `rivmux-transmux-core-*.wasm`；应用使用 `rivmux` 时不需要额外复制或配置该二进制。
+
 ## 页面能力
 
 - 编辑 `URL`

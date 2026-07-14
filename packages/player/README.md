@@ -142,11 +142,11 @@ Values are in seconds.
 
 ### `runtime`
 
-| Option            | Default             | Description                                                                                                                                         |
-| ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                                                                              |
-| `workerUrl`       | bundled worker URL  | Overrides the worker script URL. Use this when serving worker assets from a fixed public path.                                                      |
-| `wasmUrl`         | bundled WASM module | Overrides the WASM asset URL. If provided, the matching wasm-bindgen JS glue file must be available at the same path with `.js` instead of `.wasm`. |
+| Option            | Default             | Description                                                                                    |
+| ----------------- | ------------------- | ---------------------------------------------------------------------------------------------- |
+| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                         |
+| `workerUrl`       | bundled worker URL  | Overrides the worker script URL. Use this when serving worker assets from a fixed public path. |
+| `wasmUrl`         | bundled WASM module | Overrides the WASM binary URL. The packaged worker already includes the wasm-bindgen JS glue.  |
 
 ### `diagnostics`
 

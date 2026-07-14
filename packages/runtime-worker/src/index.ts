@@ -1,5 +1,7 @@
 import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 
+const bundledWasmUrl = new URL('./rivmux-transmux-core.wasm', import.meta.url)
+
 export type WorkerLike = Pick<Worker, 'addEventListener' | 'postMessage' | 'removeEventListener' | 'terminate'>
 
 export type RuntimeWorkerFactory = (options: NormalizedRivmuxPlayerOptions) => WorkerLike
@@ -12,6 +14,16 @@ type PendingRequest = {
 export type WorkerClientHooks = {
   onMessage(message: WorkerMessage): void
   onError(error: PlayerError): void
+}
+
+/**
+ * Returns the packaged WASM asset URL for the application bundler to track.
+ *
+ * Vite rewrites this static URL during the client build and emits the matching
+ * binary next to the application assets.
+ */
+export function getBundledWasmUrl(): string {
+  return bundledWasmUrl.href
 }
 
 const REQUEST_TIMEOUT_MS = 5000

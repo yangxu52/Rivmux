@@ -130,9 +130,9 @@ importers:
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
-      rolldown-plugin-wasm:
-        specifier: ^0.3.2
-        version: 0.3.2(rolldown@1.1.4)
+      '@rivmux/transmux-core':
+        specifier: workspace:*
+        version: link:../../crates/transmux-core
       tsdown:
         specifier: 'catalog:'
         version: 0.22.3(typescript@6.0.3)(vue-tsc@3.3.6(typescript@6.0.3))
@@ -1936,12 +1936,6 @@ packages:
         optional: true
       vue-tsc:
         optional: true
-
-  rolldown-plugin-wasm@0.3.2:
-    resolution: {integrity: sha512-WYjcRNvX8i3PoAPIbmENebUhn1b3nbkorLSGMBGBP5mPaSE5Jh5JWuVhRm3Nl5n6VL23OtWh3TOm0wwMYYV+8Q==}
-    engines: {node: ^22.18.0 || >=24.0.0}
-    peerDependencies:
-      rolldown: ^1.0.0
 
   rolldown@1.1.4:
     resolution: {integrity: sha512-IjZYiLxZwpnhwhdBH2ugdTGVSdhCQUmLxLoqyjiL0JxYjyRst+5a0P3xfrTxJ5F638j4Mvvw5FAX5XE6eHpXbA==}
@@ -4155,10 +4149,6 @@ snapshots:
       vue-tsc: 3.3.6(typescript@6.0.3)
     transitivePeerDependencies:
       - oxc-resolver
-
-  rolldown-plugin-wasm@0.3.2(rolldown@1.1.4):
-    dependencies:
-      rolldown: 1.1.4
 
   rolldown@1.1.4:
     dependencies:

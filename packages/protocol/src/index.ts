@@ -51,10 +51,7 @@ export type RuntimeOptions = {
   /** Overrides the worker script URL used by the default runtime. */
   workerUrl?: string
 
-  /**
-   * Overrides the WASM asset URL. The matching wasm-bindgen JS glue file must
-   * be available at the same path with `.js` instead of `.wasm`.
-   */
+  /** Overrides the WASM binary URL used by the packaged wasm-bindgen runtime. */
   wasmUrl?: string
 
   /** Reserved for future custom runtime integrations and rejected by M1. */

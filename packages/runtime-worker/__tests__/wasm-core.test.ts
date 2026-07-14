@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { WasmTransmuxCoreHost, coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, normalizeCoreEvents } from '../src/wasm/rivmux-transmux-wasm'
-import { createWasmTransmuxCoreHost, toWasmBindgenGlueUrl } from '../src/wasm/wasm-loader'
+import { createWasmTransmuxCoreHost, loadWasmTransmuxCoreHost } from '../src/wasm/wasm-loader'
+import { initializedWasmSources, resetInitializedWasmSources } from './stubs/rivmux-transmux-core'
 
 describe('runtime transmux core host', () => {
   it('normalizes wasm event arrays', () => {
@@ -121,11 +122,23 @@ describe('runtime transmux core host', () => {
     expect(() => createWasmTransmuxCoreHost(undefined)).toThrow('WASM transmux core constructor is not available.')
   })
 
-  it('resolves wasm-bindgen glue next to the wasm asset', () => {
-    expect(toWasmBindgenGlueUrl('https://cdn.example.test/rivmux_transmux_core_bg.wasm')).toBe('https://cdn.example.test/rivmux_transmux_core.js')
-    expect(toWasmBindgenGlueUrl('https://cdn.example.test/rivmux-transmux-core.wasm?version=1')).toBe(
-      'https://cdn.example.test/rivmux-transmux-core.js?version=1'
-    )
+  it('initializes the wasm-bindgen module with an explicit asset URL', async () => {
+    resetInitializedWasmSources()
+
+    const host = await loadWasmTransmuxCoreHost('https://cdn.example.test/rivmux-transmux-core.wasm')
+
+    expect(host).toBeInstanceOf(WasmTransmuxCoreHost)
+    expect(initializedWasmSources).toStrictEqual(['https://cdn.example.test/rivmux-transmux-core.wasm'])
+  })
+
+  it('uses the packaged Worker-relative WASM asset by default', async () => {
+    resetInitializedWasmSources()
+
+    await loadWasmTransmuxCoreHost(undefined)
+
+    const source = initializedWasmSources[0]
+    expect(source).toBeInstanceOf(URL)
+    expect((source as URL).pathname).toMatch(/rivmux-transmux-core\.wasm$/u)
   })
 })
 

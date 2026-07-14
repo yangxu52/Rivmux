@@ -5,6 +5,12 @@ type TransmuxCoreWasmConstructor = new () => {
   destroy(): void
 }
 
-// eslint-disable-next-line
-let wasm: TransmuxCoreWasmConstructor
-export { wasm as TransmuxCore }
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module
+
+declare const TransmuxCore: TransmuxCoreWasmConstructor
+
+export { TransmuxCore }
+
+declare function initWasmCore(input?: InitInput | Promise<InitInput>): Promise<unknown>
+
+export default initWasmCore

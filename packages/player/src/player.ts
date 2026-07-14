@@ -2,7 +2,7 @@ import { PlayerEventEmitter } from './events'
 import { createPlayerError, playerErrorToException } from './errors'
 import { detectMainThreadRuntime } from './feature-detect'
 import { normalizePlayerOptions } from './options'
-import { createRuntimeWorker, WorkerClient } from '@rivmux/runtime-worker'
+import { createRuntimeWorker, getBundledWasmUrl, WorkerClient } from '@rivmux/runtime-worker'
 
 import type {
   NormalizedRivmuxPlayerOptions,
@@ -185,7 +185,7 @@ export class RivmuxPlayer {
       onMessage: (message) => this.handleWorkerMessage(message),
       onError: (error) => this.events.emit('error', error),
     })
-    this.workerClient.post({ type: 'init', id: this.id, url: this.url, options: this.options })
+    this.workerClient.post({ type: 'init', id: this.id, url: this.url, options: withBundledWasmUrl(this.options) })
   }
 
   private handleWorkerMessage(message: WorkerMessage): void {
@@ -351,4 +351,18 @@ function getDroppedFrames(video: HTMLVideoElement): number | undefined {
 
   const webkitDroppedFrameCount = (video as HTMLVideoElement & { webkitDroppedFrameCount?: number }).webkitDroppedFrameCount
   return Number.isFinite(webkitDroppedFrameCount) ? webkitDroppedFrameCount : undefined
+}
+
+function withBundledWasmUrl(options: NormalizedRivmuxPlayerOptions): NormalizedRivmuxPlayerOptions {
+  if (options.runtime.wasmUrl !== undefined) {
+    return options
+  }
+
+  return {
+    ...options,
+    runtime: {
+      ...options.runtime,
+      wasmUrl: getBundledWasmUrl(),
+    },
+  }
 }

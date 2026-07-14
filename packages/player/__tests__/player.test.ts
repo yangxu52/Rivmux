@@ -34,6 +34,7 @@ describe('RivmuxPlayer', () => {
     expect(worker.commands[0]?.options).toMatchObject({
       runtime: {
         preferWorkerMse: true,
+        wasmUrl: expect.any(String),
       },
     })
     expect(worker.commands[1]).toStrictEqual({ type: 'attach-media-source' })
@@ -113,6 +114,26 @@ describe('RivmuxPlayer', () => {
 
     expect(workers[0]?.commands.map((command) => command.type).slice(0, 4)).toStrictEqual(['init', 'attach-media-source', 'start', 'video-state'])
     expect(workers[1]?.commands.map((command) => command.type)).toStrictEqual(['init', 'attach-media-source'])
+  })
+
+  it('preserves an explicit WASM URL when initializing the worker', async () => {
+    const worker = new MockWorker()
+    const player = new RivmuxPlayer(
+      'https://example.test/live.flv',
+      { runtime: { wasmUrl: 'https://cdn.example.test/rivmux-transmux-core.wasm' } },
+      {
+        workerFactory: () => worker,
+        detectRuntime: () => undefined,
+      }
+    )
+
+    const attachPromise = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    expect(worker.commands[0]?.options).toMatchObject({
+      runtime: { wasmUrl: 'https://cdn.example.test/rivmux-transmux-core.wasm' },
+    })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
   })
 
   it('rejects start after destroy with a structured runtime code', async () => {

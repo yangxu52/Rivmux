@@ -7,8 +7,7 @@
     "declarationMap": true,
     "rootDir": "./src",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
-    "types": ["rolldown-plugin-wasm/types"]
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo"
   },
   "references": [{ "path": "../protocol" }, { "path": "../../crates/transmux-core" }],
   "include": ["src/**/*"],
