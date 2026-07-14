@@ -98,23 +98,11 @@ function validateRuntimeOptions(options: NormalizedRivmuxPlayerOptions): void {
 }
 
 function normalizeRuntimeOptions(options: RivmuxPlayerOptions): NormalizedRivmuxPlayerOptions['runtime'] {
-  if (hasOwn(options.runtime, 'wasmModule')) {
-    throwOptionError(
-      'unsupported',
-      'RIVMUX_UNSUPPORTED_WASM_MODULE_RUNTIME',
-      'runtime.wasmModule is reserved for future custom runtime integrations and is not supported by the M1 default runtime.'
-    )
-  }
-
   return {
     preferWorkerMse: options.runtime?.preferWorkerMse ?? DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime.preferWorkerMse,
     ...(options.runtime?.workerUrl === undefined ? {} : { workerUrl: options.runtime.workerUrl }),
     ...(options.runtime?.wasmUrl === undefined ? {} : { wasmUrl: options.runtime.wasmUrl }),
   }
-}
-
-function hasOwn<T extends object>(value: T | undefined, key: PropertyKey): boolean {
-  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key)
 }
 
 function assertFiniteNonNegativeLatency(value: number, field: string): void {

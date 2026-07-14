@@ -43,19 +43,16 @@ export type NetworkOptions = {
   }
 }
 
-/** Runtime asset and worker selection options. */
+/** Advanced runtime asset deployment options. */
 export type RuntimeOptions = {
   /** Must remain true while M1 supports only worker-backed Media Source Extensions. */
   preferWorkerMse?: boolean
 
-  /** Overrides the worker script URL used by the default runtime. */
+  /** Overrides the packaged Dedicated Worker script URL. */
   workerUrl?: string
 
   /** Overrides the WASM binary URL used by the packaged wasm-bindgen runtime. */
   wasmUrl?: string
-
-  /** Reserved for future custom runtime integrations and rejected by M1. */
-  wasmModule?: WebAssembly.Module
 }
 
 /** Diagnostics and debug reporting options. */

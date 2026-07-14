@@ -6,8 +6,7 @@ Public browser player facade for Rivmux low-latency live playback.
 audio/video into fragmented MP4, and attaches the resulting media stream to a
 browser `<video>` element.
 
-M1 supports only the dedicated-worker MSE runtime path. Main-thread MSE and
-custom precompiled WASM module injection are not exposed runtime capabilities.
+M1 supports only the dedicated-worker MSE runtime path. Main-thread MSE is not available.
 
 ## Install
 
@@ -101,10 +100,6 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
       backoffMs: 500,
     },
   },
-  runtime: {
-    workerUrl: '/assets/rivmux-runtime-worker.js',
-    wasmUrl: '/assets/rivmux-transmux-core.wasm',
-  },
   diagnostics: {
     statsIntervalMs: 1000,
     debug: false,
@@ -142,11 +137,35 @@ Values are in seconds.
 
 ### `runtime`
 
-| Option            | Default             | Description                                                                                    |
-| ----------------- | ------------------- | ---------------------------------------------------------------------------------------------- |
-| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                         |
-| `workerUrl`       | bundled worker URL  | Overrides the worker script URL. Use this when serving worker assets from a fixed public path. |
-| `wasmUrl`         | bundled WASM module | Overrides the WASM binary URL. The packaged worker already includes the wasm-bindgen JS glue.  |
+| Option            | Default             | Description                                                                                                               |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                                                    |
+| `workerUrl`       | bundled worker URL  | Advanced override for the packaged Dedicated Worker script URL.                                                           |
+| `wasmUrl`         | bundled WASM module | Advanced override for the packaged WASM binary URL. It must match the Worker release that contains the wasm-bindgen glue. |
+
+### Advanced Asset Deployment
+
+Most applications should omit `runtime.workerUrl` and `runtime.wasmUrl`. The
+default package assets are tracked by Vite and emitted with the application
+build.
+
+Set these options only when your deployment serves Rivmux assets from a fixed
+public path or CDN:
+
+```ts
+const player = new RivmuxPlayer('https://example.com/live.flv', {
+  runtime: {
+    workerUrl: 'https://cdn.example.com/rivmux/0.4.0/rivmux-runtime-worker.js',
+    wasmUrl: 'https://cdn.example.com/rivmux/0.4.0/rivmux-transmux-core.wasm',
+  },
+})
+```
+
+`workerUrl` does not derive `wasmUrl`; when you override both assets, publish
+them as a matching release pair. Treat both URLs as trusted executable asset
+locations and never construct them from untrusted input. The host application
+is responsible for compatible CSP and CORS policies, serving the WASM asset as
+`application/wasm`, and cache-busting the Worker/WASM pair together.
 
 ### `diagnostics`
 
