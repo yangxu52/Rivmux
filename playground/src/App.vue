@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .page {
   width: min(100%, 1600px);
-  min-height: 100dvh;
+  max-height: 100vh;
   margin: 0 auto;
   padding: 24px;
   display: flex;
@@ -154,34 +154,34 @@ onBeforeUnmount(() => {
 .panel {
   border: 1px solid #d9e3ed;
   border-radius: 8px;
-  padding: 18px;
+  padding: 16px;
   background: linear-gradient(180deg, #ffffff 0%, #f5f8fb 100%);
   box-shadow: 0 10px 24px rgb(36 67 96 / 8%);
 }
 
 .panel--controls {
-  flex: 0 0 360px;
+  flex: 1 1 25%;
   display: flex;
   flex-direction: column;
 }
 
 .panel--video {
-  flex: 1 1 auto;
+  flex: 1 1 75%;
   min-width: 0;
 }
 
 .video-wrapper {
   margin: 0 auto;
   width: min(1080px, 100%);
+  aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 4px;
   background: #05080c;
 }
 
 .player {
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 10;
   height: auto;
   object-fit: contain;
 }

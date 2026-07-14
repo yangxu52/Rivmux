@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "preview": "vite preview",
     "build": "vite build",
-    "tsc": "vue-tsc -b",
+    "typecheck": "vue-tsc -b",
     "clean": "rimraf dist"
   },
   "dependencies": {
