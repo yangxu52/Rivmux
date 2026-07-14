@@ -24,6 +24,7 @@ wasm = ["serde", "dep:serde-wasm-bindgen", "dep:wasm-bindgen"]
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = [
   '-O4',
+  '--strip-debug',
   '--enable-simd',
   '--enable-bulk-memory',
   '--enable-multivalue',

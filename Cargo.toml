@@ -12,7 +12,6 @@ authors = ["yangxu52"]
 opt-level = "z"         # 最高优化级别 (0-3, s, z)
 debug = false           # 禁用调试信息
 overflow-checks = false # 禁用整数溢出检查
-strip = true            # 禁用符号信息
 lto = true              # 启用链接时优化 (Link Time Optimization)
 codegen-units = 1       # 减少代码生成单元，提高优化效果
 panic = "abort"         # 使用 abort 而不是 unwind，减小文件大小
