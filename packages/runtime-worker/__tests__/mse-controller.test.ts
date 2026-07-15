@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { MseUnsupportedMimeError } from '../src/mse/mime'
 import { MseController } from '../src/mse/mse-controller'
 
 describe('MseController SourceBuffer strategy', () => {
@@ -70,11 +71,41 @@ describe('MseController SourceBuffer strategy', () => {
     ])
     expect(registry.sourceBuffers.map((sourceBuffer) => sourceBuffer.appendCount)).toStrictEqual([2, 2])
   })
+
+  it('defers codec support checks until an Opus init segment arrives', async () => {
+    const registry = installMockMse((mimeType) => mimeType === 'audio/mp4; codecs="opus"')
+    const controller = new MseController()
+
+    await controller.createMediaSourceHandle()
+    await controller.appendInitSegment({
+      track: 'audio',
+      codec: 'opus',
+      timescale: 48_000,
+      bytes: new Uint8Array([1]),
+    })
+
+    expect(registry.sourceBuffers.map((sourceBuffer) => sourceBuffer.mimeType)).toStrictEqual(['audio/mp4; codecs="opus"'])
+  })
+
+  it('reports the unsupported codec MIME from its init segment', async () => {
+    installMockMse(() => false)
+    const controller = new MseController()
+
+    await controller.createMediaSourceHandle()
+    await expect(
+      controller.appendInitSegment({
+        track: 'audio',
+        codec: 'opus',
+        timescale: 48_000,
+        bytes: new Uint8Array([1]),
+      })
+    ).rejects.toEqual(new MseUnsupportedMimeError('audio/mp4; codecs="opus"'))
+  })
 })
 
-function installMockMse(): MockMseRegistry {
+function installMockMse(isTypeSupported: (mimeType: string) => boolean = () => true): MockMseRegistry {
   const registry = new MockMseRegistry()
-  vi.stubGlobal('MediaSource', createMockMediaSourceClass(registry))
+  vi.stubGlobal('MediaSource', createMockMediaSourceClass(registry, isTypeSupported))
   return registry
 }
 
@@ -143,11 +174,11 @@ class MockSourceBuffer {
   }
 }
 
-function createMockMediaSourceClass(registry: MockMseRegistry): typeof MediaSource {
+function createMockMediaSourceClass(registry: MockMseRegistry, isTypeSupported: (mimeType: string) => boolean): typeof MediaSource {
   return class {
     static readonly canConstructInDedicatedWorker = true
-    static isTypeSupported(): boolean {
-      return true
+    static isTypeSupported(mimeType: string): boolean {
+      return isTypeSupported(mimeType)
     }
 
     constructor() {

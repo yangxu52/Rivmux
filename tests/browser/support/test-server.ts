@@ -65,13 +65,15 @@ export function createBrowserTestServer(): Plugin {
         })
 
         const fixture = url.searchParams.get('fixture')
-        const isCoreFixture = fixture === 'h264' || fixture === 'h264-aac'
+        const isCoreFixture = fixture === 'h264' || fixture === 'h264-aac' || fixture === 'opus'
         const chunk =
           fixture === 'h264'
             ? createCoreH264FlvFixture()
             : fixture === 'h264-aac'
               ? createCoreH264AacFlvFixture()
-              : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
+              : fixture === 'opus'
+                ? createCoreOpusFlvFixture()
+                : new Uint8Array([70, 76, 86, 1, 1, 0, 0, 0, 9, 0, 0, 0, 0])
         const writeChunk = (bytes: Uint8Array): void => {
           if (response.writableEnded) {
             return
@@ -137,6 +139,7 @@ function parsePositiveInteger(value: string | null): number | undefined {
 
 let cachedCoreH264FlvFixture: Uint8Array | undefined
 let cachedCoreH264AacFlvFixture: Uint8Array | undefined
+let cachedCoreOpusFlvFixture: Uint8Array | undefined
 
 function createCoreH264FlvFixture(): Uint8Array {
   cachedCoreH264FlvFixture ??= buildCoreH264FlvFixture()
@@ -146,6 +149,11 @@ function createCoreH264FlvFixture(): Uint8Array {
 function createCoreH264AacFlvFixture(): Uint8Array {
   cachedCoreH264AacFlvFixture ??= buildCoreH264AacFlvFixture()
   return cachedCoreH264AacFlvFixture
+}
+
+function createCoreOpusFlvFixture(): Uint8Array {
+  cachedCoreOpusFlvFixture ??= buildCoreOpusFlvFixture()
+  return cachedCoreOpusFlvFixture
 }
 
 function buildCoreH264FlvFixture(): Uint8Array {
@@ -174,8 +182,16 @@ function buildCoreH264AacFlvFixture(): Uint8Array {
   ])
 }
 
+function buildCoreOpusFlvFixture(): Uint8Array {
+  return concatBytes([audioOnlyFlvHeader(), opusSequenceHeaderTag(), opusSampleTag(20)])
+}
+
 function flvHeader(hasAudio: boolean): Uint8Array {
   return new Uint8Array([0x46, 0x4c, 0x56, 1, hasAudio ? 5 : 1, 0, 0, 0, 9, 0, 0, 0, 0])
+}
+
+function audioOnlyFlvHeader(): Uint8Array {
+  return new Uint8Array([0x46, 0x4c, 0x56, 1, 4, 0, 0, 0, 9, 0, 0, 0, 0])
 }
 
 function videoSequenceHeaderTag(avcc: Uint8Array): Uint8Array {
@@ -194,6 +210,14 @@ function audioSampleTag(timestampMs: number, sample: Uint8Array): Uint8Array {
   return rawFlvTag(8, timestampMs, concatBytes([new Uint8Array([0xaf, 1]), sample]))
 }
 
+function opusSequenceHeaderTag(): Uint8Array {
+  return rawFlvTag(8, 0, concatBytes([new Uint8Array([0x90, 0x4f, 0x70, 0x75, 0x73]), OPUS_HEAD]))
+}
+
+function opusSampleTag(timestampMs: number): Uint8Array {
+  return rawFlvTag(8, timestampMs, concatBytes([new Uint8Array([0x91, 0x4f, 0x70, 0x75, 0x73]), OPUS_PACKET]))
+}
+
 function rawFlvTag(tagType: number, timestampMs: number, payload: Uint8Array): Uint8Array {
   const previousTagSize = 11 + payload.byteLength
   return concatBytes([
@@ -202,6 +226,10 @@ function rawFlvTag(tagType: number, timestampMs: number, payload: Uint8Array): U
     new Uint8Array([(previousTagSize >> 24) & 0xff, (previousTagSize >> 16) & 0xff, (previousTagSize >> 8) & 0xff, previousTagSize & 0xff]),
   ])
 }
+
+const OPUS_HEAD = new Uint8Array([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x01, 0x38, 0x01, 0x80, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00])
+
+const OPUS_PACKET = new Uint8Array([0x0b, 0x41, 0x06, 0x0b, 0xe4, 0x53, 0x15, 0x4b, 0xf2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
 
 function findFirstVideoSample(mediaSegment: Uint8Array): Uint8Array {
   const trun = findBox(mediaSegment, 'trun')

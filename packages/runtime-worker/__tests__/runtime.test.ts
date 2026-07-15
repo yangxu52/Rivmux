@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { HttpFlvLoaderError } from '../src/loader/http-flv-loader'
+import { MseUnsupportedMimeError } from '../src/mse/mime'
 import { RuntimeWorker } from '../src/runtime'
 
 import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from '@rivmux/protocol'
@@ -480,6 +481,40 @@ describe('RuntimeWorker', () => {
         cause: {
           name: 'Error',
           message: 'append init failed',
+        },
+      },
+    })
+  })
+
+  it('reports unsupported MSE codec MIME as a terminal unsupported error', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const mse = new MockMseController()
+    mse.appendInitError = new MseUnsupportedMimeError('audio/mp4; codecs="opus"')
+    const transmuxCore = new MockTransmuxCore([
+      [{ type: 'initSegment', data: { track: 'audio', codec: 'opus', timescale: 48_000, bytes: new Uint8Array([1, 2, 3]) } }],
+    ])
+    const runtime = createRuntime(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: {
+        kind: 'unsupported',
+        code: 'RIVMUX_UNSUPPORTED_MSE_CODEC',
+        message: 'MSE does not support audio/mp4; codecs="opus".',
+        terminal: true,
+        cause: {
+          name: 'MseUnsupportedMimeError',
+          message: 'MSE does not support audio/mp4; codecs="opus".',
         },
       },
     })

@@ -58,6 +58,42 @@ describe('Rivmux browser runtime', () => {
     }
   })
 
+  it('appends Opus fMP4 segments from Enhanced FLV', async () => {
+    await resetTestStreams()
+
+    const video = createVideo()
+    const player = createPlayer('opus-enhanced-flv', {
+      autoPlay: false,
+      fixture: 'opus',
+    })
+    const errors: unknown[] = []
+    const mediaInfo: unknown[] = []
+    const stats: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+    player.on('mediaInfo', (info) => mediaInfo.push(info))
+    player.on('stats', (entry) => stats.push(entry))
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitForCoreSignal(errors, () => mediaInfo.some((info) => isRecord(info) && info.container === 'flv' && info.audioCodec === 'opus'))
+      await waitForCoreSignal(errors, () => stats.some((entry) => isNumberFieldAtLeast(entry, 'outputBytes', 1)))
+      expect(errors).toStrictEqual([])
+      expect(mediaInfo).toContainEqual(
+        expect.objectContaining({
+          container: 'flv',
+          audioCodec: 'opus',
+          audioSampleRate: 48_000,
+          audioChannelCount: 1,
+        })
+      )
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
+
   it('starts two independent instances and closes both HTTP-FLV streams', async () => {
     await resetTestStreams()
 
