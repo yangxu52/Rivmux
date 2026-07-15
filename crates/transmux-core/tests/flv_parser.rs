@@ -291,8 +291,12 @@ fn parses_enhanced_flv_coded_frames_x_without_composition_time() {
 
 #[test]
 fn parses_enhanced_flv_av1_temporal_unit() {
+    let av1c_with_config_obus = [
+        0x81, 0x00, 0x0C, 0x00, 0x0A, 0x0A, 0x00, 0x00, 0x00, 0x02, 0xAF, 0xFF, 0x9B, 0x5F, 0x20,
+        0x08,
+    ];
     let input = build_flv(vec![
-        enhanced_video_tag(100, true, 0, b"av01", &[0x81, 0x08, 0, 0]),
+        enhanced_video_tag(100, true, 0, b"av01", &av1c_with_config_obus),
         enhanced_video_tag(100, true, 1, b"av01", &[0x12, 0]),
     ]);
     let mut core = TransmuxCore::new(CoreConfig::default());
@@ -306,7 +310,10 @@ fn parses_enhanced_flv_av1_temporal_unit() {
             CoreEvent::TrackConfig(TrackConfig::Video(track))
                 if matches!(
                     &track.codec,
-                    VideoCodecConfig::Av1(config) if config.codec_string == "av01.0.08M.08"
+                    VideoCodecConfig::Av1(config)
+                        if config.codec_string == "av01.0.00M.08"
+                            && config.width == Some(64)
+                            && config.height == Some(64)
                 )
         )
     }));
@@ -325,7 +332,7 @@ fn parses_enhanced_flv_av1_temporal_unit() {
         matches!(
             event,
             CoreEvent::InitSegment(segment)
-                if segment.codec == "av01.0.08M.08"
+                if segment.codec == "av01.0.00M.08"
                     && find_box(&segment.bytes, b"av01").is_some()
                     && find_box(&segment.bytes, b"av1C").is_some()
         )
