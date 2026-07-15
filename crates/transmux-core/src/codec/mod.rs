@@ -1,4 +1,12 @@
 pub(crate) mod aac;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Enhanced FLV demuxing will construct AV1 normalization inputs in the next container phase."
+    )
+)]
+pub(crate) mod av1;
 pub(crate) mod avc;
 #[cfg_attr(
     not(test),
@@ -11,6 +19,7 @@ pub(crate) mod hevc;
 pub(crate) mod normalizer;
 
 use crate::codec::aac::AacConfig;
+use crate::codec::av1::Av1Config;
 use crate::codec::avc::AvcConfig;
 use crate::codec::hevc::HevcConfig;
 use crate::probe::{AudioCodecKind, VideoCodecKind};
@@ -22,6 +31,7 @@ use crate::probe::{AudioCodecKind, VideoCodecKind};
 pub enum VideoCodecConfig {
     Avc(AvcConfig),
     Hevc(HevcConfig),
+    Av1(Av1Config),
 }
 
 impl VideoCodecConfig {
@@ -30,6 +40,7 @@ impl VideoCodecConfig {
         match self {
             Self::Avc(_) => VideoCodecKind::Avc,
             Self::Hevc(_) => VideoCodecKind::Hevc,
+            Self::Av1(_) => VideoCodecKind::Av1,
         }
     }
 
@@ -38,6 +49,7 @@ impl VideoCodecConfig {
         match self {
             Self::Avc(config) => &config.codec_string,
             Self::Hevc(config) => &config.codec_string,
+            Self::Av1(config) => &config.codec_string,
         }
     }
 
@@ -46,6 +58,7 @@ impl VideoCodecConfig {
         match self {
             Self::Avc(config) => (config.width, config.height),
             Self::Hevc(config) => (config.width, config.height),
+            Self::Av1(config) => (config.width, config.height),
         }
     }
 }

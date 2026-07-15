@@ -1,4 +1,5 @@
 use crate::codec::aac::AacConfig;
+use crate::codec::av1::Av1Config;
 use crate::codec::avc::AvcConfig;
 use crate::codec::hevc::HevcConfig;
 use crate::codec::{AudioCodecConfig, VideoCodecConfig};
@@ -25,6 +26,7 @@ impl Fmp4VideoCodec for VideoCodecConfig {
         match self {
             Self::Avc(_) => b"avc1",
             Self::Hevc(_) => b"hvc1",
+            Self::Av1(_) => b"av01",
         }
     }
 
@@ -32,6 +34,7 @@ impl Fmp4VideoCodec for VideoCodecConfig {
         match self {
             Self::Avc(config) => avc1(config),
             Self::Hevc(config) => hvc1(config),
+            Self::Av1(config) => av01(config),
         }
     }
 
@@ -335,6 +338,10 @@ fn hvc1(config: &HevcConfig) -> Vec<u8> {
     visual_sample_entry(b"hvc1", b"hvcC", &config.hvcc, config.width, config.height)
 }
 
+fn av01(config: &Av1Config) -> Vec<u8> {
+    visual_sample_entry(b"av01", b"av1C", &config.av1c, config.width, config.height)
+}
+
 fn visual_sample_entry(
     sample_entry_type: &[u8; 4],
     configuration_type: &[u8; 4],
@@ -479,6 +486,7 @@ fn dimensions(config: &VideoCodecConfig) -> (u16, u16) {
 mod tests {
     use super::build_video_init_segment;
     use crate::codec::VideoCodecConfig;
+    use crate::codec::av1::Av1Config;
     use crate::codec::hevc::HevcConfig;
     use crate::track::{TrackClock, TrackId, VideoTrackConfig};
 
@@ -507,5 +515,30 @@ mod tests {
                 .any(|window| window == hvcc)
         );
         assert!(!init_segment.windows(4).any(|window| window == b"hev1"));
+    }
+
+    #[test]
+    fn writes_av01_sample_entry_with_av1c() {
+        let av1c = vec![0x81, 0x08, 0x00, 0x00];
+        let config = VideoTrackConfig {
+            id: TrackId::VIDEO,
+            clock: TrackClock::new(90_000, 90_000).unwrap(),
+            codec: VideoCodecConfig::Av1(Av1Config {
+                codec_string: "av01.0.08M.08".to_string(),
+                width: None,
+                height: None,
+                av1c: av1c.clone(),
+            }),
+        };
+
+        let init_segment = build_video_init_segment(&config);
+
+        assert!(init_segment.windows(4).any(|window| window == b"av01"));
+        assert!(init_segment.windows(4).any(|window| window == b"av1C"));
+        assert!(
+            init_segment
+                .windows(av1c.len())
+                .any(|window| window == av1c)
+        );
     }
 }

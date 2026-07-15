@@ -139,6 +139,11 @@ impl VideoAccessUnitNormalizer for HevcNormalizer {
                 split_length_prefixed_nalus(data, config.nal_length_size)?
             }
             VideoSampleData::AnnexB(data) => split_annex_b_nalus(data)?,
+            VideoSampleData::ObuTemporalUnit(_) => {
+                return Err(invalid_container(
+                    "HEVC normalizer received an AV1 OBU temporal unit.",
+                ));
+            }
         };
         self.update_parameter_sets(&nalus, out)?;
 

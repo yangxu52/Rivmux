@@ -171,6 +171,12 @@ impl VideoAccessUnitNormalizer for AvcNormalizer {
             VideoSampleData::AnnexB(data) => {
                 self.normalize_annex_b_access_unit(data, unit.is_sync, out)?
             }
+            VideoSampleData::ObuTemporalUnit(_) => {
+                return Err(CoreError::new(
+                    CoreErrorCode::InvalidContainerData,
+                    "AVC normalizer received an AV1 OBU temporal unit.",
+                ));
+            }
         };
         out.push(VideoNormalizerEvent::Sample(EncodedSample::Video {
             track_id: unit.track_id,
