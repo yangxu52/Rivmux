@@ -1,5 +1,6 @@
 use crate::codec::aac::AacConfig;
 use crate::codec::avc::AvcConfig;
+use crate::codec::hevc::HevcConfig;
 use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 use crate::muxer::fmp4::boxes::{
     concat_box, write_box, write_fixed_16_16, write_full_box, write_u16, write_u32,
@@ -23,12 +24,14 @@ impl Fmp4VideoCodec for VideoCodecConfig {
     fn compatible_brand(&self) -> &[u8; 4] {
         match self {
             Self::Avc(_) => b"avc1",
+            Self::Hevc(_) => b"hvc1",
         }
     }
 
     fn sample_entry(&self) -> Vec<u8> {
         match self {
             Self::Avc(config) => avc1(config),
+            Self::Hevc(config) => hvc1(config),
         }
     }
 
@@ -325,8 +328,22 @@ fn audio_stsd(config: &AudioTrackConfig) -> Vec<u8> {
 }
 
 fn avc1(config: &AvcConfig) -> Vec<u8> {
-    let width = config.width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
-    let height = config.height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
+    visual_sample_entry(b"avc1", b"avcC", &config.avcc, config.width, config.height)
+}
+
+fn hvc1(config: &HevcConfig) -> Vec<u8> {
+    visual_sample_entry(b"hvc1", b"hvcC", &config.hvcc, config.width, config.height)
+}
+
+fn visual_sample_entry(
+    sample_entry_type: &[u8; 4],
+    configuration_type: &[u8; 4],
+    configuration: &[u8],
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Vec<u8> {
+    let width = width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
+    let height = height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
     let mut payload = Vec::new();
     payload.extend_from_slice(&[0; 6]);
     write_u16(&mut payload, 1);
@@ -344,8 +361,8 @@ fn avc1(config: &AvcConfig) -> Vec<u8> {
     payload.extend_from_slice(&[0; 32]);
     write_u16(&mut payload, 0x0018);
     write_u16(&mut payload, 0xFFFF);
-    payload.extend_from_slice(&write_box(b"avcC", config.avcc.clone()));
-    write_box(b"avc1", payload)
+    payload.extend_from_slice(&write_box(configuration_type, configuration.to_vec()));
+    write_box(sample_entry_type, payload)
 }
 
 fn mp4a(config: &AacConfig) -> Vec<u8> {
@@ -456,4 +473,39 @@ fn dimensions(config: &VideoCodecConfig) -> (u16, u16) {
     let width = width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
     let height = height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
     (width, height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_video_init_segment;
+    use crate::codec::VideoCodecConfig;
+    use crate::codec::hevc::HevcConfig;
+    use crate::track::{TrackClock, TrackId, VideoTrackConfig};
+
+    #[test]
+    fn writes_hvc1_sample_entry_with_hvcc() {
+        let hvcc = vec![1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 120];
+        let config = VideoTrackConfig {
+            id: TrackId::VIDEO,
+            clock: TrackClock::new(90_000, 90_000).unwrap(),
+            codec: VideoCodecConfig::Hevc(HevcConfig {
+                codec_string: "hvc1.1.0.L120".to_string(),
+                width: Some(1920),
+                height: Some(1080),
+                nal_length_size: 4,
+                hvcc: hvcc.clone(),
+            }),
+        };
+
+        let init_segment = build_video_init_segment(&config);
+
+        assert!(init_segment.windows(4).any(|window| window == b"hvc1"));
+        assert!(init_segment.windows(4).any(|window| window == b"hvcC"));
+        assert!(
+            init_segment
+                .windows(hvcc.len())
+                .any(|window| window == hvcc)
+        );
+        assert!(!init_segment.windows(4).any(|window| window == b"hev1"));
+    }
 }

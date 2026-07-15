@@ -16,6 +16,7 @@ mod wasm;
 
 pub use crate::codec::aac::AacConfig;
 pub use crate::codec::avc::AvcConfig;
+pub use crate::codec::hevc::HevcConfig;
 pub use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 pub use crate::error::{CoreError, CoreErrorCode};
 pub use crate::event::{
