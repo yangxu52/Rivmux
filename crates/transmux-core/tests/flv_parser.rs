@@ -238,6 +238,43 @@ fn parses_enhanced_flv_hevc_with_composition_time() {
 }
 
 #[test]
+fn skips_enhanced_flv_hevc_metadata_without_interrupting_coded_frames() {
+    let mut coded_frame = vec![0, 0, 2];
+    coded_frame.extend_from_slice(&[0, 0, 0, 3, 0x26, 0x01, 0x80]);
+    let input = build_flv(vec![
+        enhanced_video_tag(100, true, 0, b"hvc1", &minimal_hvcc()),
+        enhanced_video_tag(110, false, 4, b"hvc1", &[0xDE, 0xAD, 0xBE, 0xEF]),
+        enhanced_video_tag(120, true, 1, b"hvc1", &coded_frame),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Warning(warning)
+                if warning.code == "RIVMUX_FLV_ENHANCED_VIDEO_METADATA_SKIPPED"
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video { timing, data, .. })
+                if timing.dts == 0
+                    && timing.pts == 2
+                    && *data == [0, 0, 0, 3, 0x26, 0x01, 0x80]
+        )
+    }));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, CoreEvent::FatalError(_)))
+    );
+}
+
+#[test]
 fn parses_enhanced_flv_avc_with_composition_time() {
     let mut coded_frame = vec![0, 0, 2];
     coded_frame.extend_from_slice(&[0, 0, 0, 1, 0x65]);
@@ -390,6 +427,72 @@ fn rejects_unknown_enhanced_flv_video_fourcc() {
     let error = core.push_chunk(&input).unwrap_err();
 
     assert_eq!(error.code, CoreErrorCode::UnsupportedVideoCodec);
+}
+
+#[test]
+fn ignores_repeated_flv_avc_sequence_headers() {
+    let config = minimal_avcc();
+    let input = build_flv(vec![
+        video_sequence_header_tag(&config),
+        video_sequence_header_tag(&config),
+        video_sample_tag(0, true, 0, &[0, 0, 0, 1, 0x65]),
+        video_sample_tag(33, false, 0, &[0, 0, 0, 1, 0x41]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CoreEvent::TrackConfig(TrackConfig::Video(_))))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CoreEvent::InitSegment(segment) if segment.codec == "avc1.42E01E"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn rejects_changed_flv_avc_sequence_header_before_emitting_a_second_track_config() {
+    let mut changed_config = minimal_avcc();
+    changed_config[3] = 0x1F;
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&build_flv(vec![video_sequence_header_tag(&minimal_avcc())]))
+        .unwrap();
+    let initial_events = drain(&mut core);
+    assert_eq!(
+        initial_events
+            .iter()
+            .filter(|event| matches!(event, CoreEvent::TrackConfig(TrackConfig::Video(_))))
+            .count(),
+        1
+    );
+
+    let error = core
+        .push_chunk(&video_sequence_header_tag(&changed_config))
+        .unwrap_err();
+    let events = drain(&mut core);
+
+    assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CoreEvent::TrackConfig(TrackConfig::Video(_))))
+            .count(),
+        0
+    );
+    assert!(matches!(
+        events.last(),
+        Some(CoreEvent::FatalError(fatal)) if fatal.code == CoreErrorCode::InvalidCodecConfig
+    ));
 }
 
 fn stereo_opus_head() -> [u8; 19] {

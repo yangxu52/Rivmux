@@ -167,8 +167,8 @@ impl VideoAccessUnitNormalizer for AvcNormalizer {
                         "AVC media sample arrived before AVCDecoderConfigurationRecord.",
                     )
                 })?;
-                validate_length_prefixed_nalus(data, config.nal_length_size)?;
-                (data.to_vec(), unit.is_sync)
+                let contains_idr = validate_length_prefixed_nalus(data, config.nal_length_size)?;
+                (data.to_vec(), unit.is_sync || contains_idr)
             }
             VideoSampleData::AnnexB(data) => {
                 self.normalize_annex_b_access_unit(data, unit.is_sync, out)?
@@ -360,8 +360,9 @@ fn length_prefix_nalus(nalus: &[&[u8]], nal_length_size: u8) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-fn validate_length_prefixed_nalus(data: &[u8], nal_length_size: u8) -> Result<(), CoreError> {
+fn validate_length_prefixed_nalus(data: &[u8], nal_length_size: u8) -> Result<bool, CoreError> {
     let mut offset = 0;
+    let mut contains_idr = false;
     let nal_length_size = usize::from(nal_length_size);
     while offset < data.len() {
         let length_end = offset.checked_add(nal_length_size).ok_or_else(|| {
@@ -392,9 +393,10 @@ fn validate_length_prefixed_nalus(data: &[u8], nal_length_size: u8) -> Result<()
                 "AVC access unit has a truncated NAL unit.",
             ));
         }
+        contains_idr |= nalu_type(&data[offset..nal_end]) == Some(5);
         offset = nal_end;
     }
-    Ok(())
+    Ok(contains_idr)
 }
 
 fn parse_sps_dimensions(sps: &[u8]) -> Result<(u32, u32), CoreError> {
@@ -663,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_length_prefixed_access_unit_after_configuration() {
+    fn recognizes_idr_in_length_prefixed_access_unit_as_sync() {
         let mut normalizer = AvcNormalizer::default();
         let mut events = Vec::new();
 
@@ -681,7 +683,7 @@ mod tests {
                 VideoAccessUnit {
                     track_id: TrackId::VIDEO,
                     timing: SampleTiming { dts: 10, pts: 12 },
-                    is_sync: true,
+                    is_sync: false,
                     data: VideoSampleData::LengthPrefixedNalus(&[0, 0, 0, 1, 0x65]),
                 },
                 &mut events,
