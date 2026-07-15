@@ -1,28 +1,86 @@
-use crate::codec::aac::AudioConfig;
-use crate::codec::avc::VideoConfig;
+use crate::codec::aac::AacConfig;
+use crate::codec::avc::AvcConfig;
+use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 use crate::muxer::fmp4::boxes::{
     concat_box, write_box, write_fixed_16_16, write_full_box, write_u16, write_u32,
 };
+use crate::track::{AudioTrackConfig, VideoTrackConfig};
 
-const VIDEO_TRACK_ID: u32 = 1;
-const AUDIO_TRACK_ID: u32 = 2;
-const VIDEO_TIMESCALE: u32 = 1000;
 const AUDIO_SAMPLE_SIZE: u16 = 16;
 
-pub(super) fn video_timescale() -> u32 {
-    VIDEO_TIMESCALE
+pub(super) trait Fmp4VideoCodec {
+    fn codec_string(&self) -> &str;
+    fn compatible_brand(&self) -> &[u8; 4];
+    fn sample_entry(&self) -> Vec<u8>;
+    fn dimensions(&self) -> (Option<u32>, Option<u32>);
 }
 
-pub(super) fn build_video_init_segment(config: &VideoConfig) -> Vec<u8> {
-    concat_box(vec![ftyp(&[b"avc1"]), video_moov(config)])
+impl Fmp4VideoCodec for VideoCodecConfig {
+    fn codec_string(&self) -> &str {
+        self.codec_string()
+    }
+
+    fn compatible_brand(&self) -> &[u8; 4] {
+        match self {
+            Self::Avc(_) => b"avc1",
+        }
+    }
+
+    fn sample_entry(&self) -> Vec<u8> {
+        match self {
+            Self::Avc(config) => avc1(config),
+        }
+    }
+
+    fn dimensions(&self) -> (Option<u32>, Option<u32>) {
+        self.dimensions()
+    }
 }
 
-pub(super) fn audio_timescale(config: &AudioConfig) -> u32 {
-    config.sample_rate
+pub(super) trait Fmp4AudioCodec {
+    fn codec_string(&self) -> &str;
+    fn compatible_brand(&self) -> &[u8; 4];
+    fn sample_entry(&self) -> Vec<u8>;
 }
 
-pub(super) fn build_audio_init_segment(config: &AudioConfig) -> Vec<u8> {
-    concat_box(vec![ftyp(&[b"mp4a"]), audio_moov(config)])
+impl Fmp4AudioCodec for AudioCodecConfig {
+    fn codec_string(&self) -> &str {
+        self.codec_string()
+    }
+
+    fn compatible_brand(&self) -> &[u8; 4] {
+        match self {
+            Self::Aac(_) => b"mp4a",
+        }
+    }
+
+    fn sample_entry(&self) -> Vec<u8> {
+        match self {
+            Self::Aac(config) => mp4a(config),
+        }
+    }
+}
+
+pub(super) fn video_timescale(config: &VideoTrackConfig) -> u32 {
+    config.clock.fmp4_timescale()
+}
+
+pub(super) fn build_video_init_segment(config: &VideoTrackConfig) -> Vec<u8> {
+    concat_box(vec![
+        ftyp(&[config.codec.compatible_brand()]),
+        video_moov(config),
+    ])
+}
+
+pub(super) fn audio_timescale(config: &AudioTrackConfig) -> u32 {
+    config.clock.fmp4_timescale()
+}
+
+pub(super) fn build_audio_init_segment(config: &AudioTrackConfig) -> Vec<u8> {
+    concat_box(vec![
+        ftyp(&[config.codec.compatible_brand()]),
+        audio_moov(config),
+    ])
 }
 
 fn ftyp(codec_brands: &[&[u8; 4]]) -> Vec<u8> {
@@ -38,24 +96,26 @@ fn ftyp(codec_brands: &[&[u8; 4]]) -> Vec<u8> {
     write_box(b"ftyp", payload)
 }
 
-fn video_moov(config: &VideoConfig) -> Vec<u8> {
+fn video_moov(config: &VideoTrackConfig) -> Vec<u8> {
+    let track_id = config.id.get();
     write_box(
         b"moov",
         concat_box(vec![
-            mvhd(VIDEO_TIMESCALE, VIDEO_TRACK_ID + 1),
+            mvhd(video_timescale(config), track_id.saturating_add(1)),
             video_trak(config),
-            mvex(&[VIDEO_TRACK_ID]),
+            mvex(&[track_id]),
         ]),
     )
 }
 
-fn audio_moov(config: &AudioConfig) -> Vec<u8> {
+fn audio_moov(config: &AudioTrackConfig) -> Vec<u8> {
+    let track_id = config.id.get();
     write_box(
         b"moov",
         concat_box(vec![
-            mvhd(config.sample_rate, AUDIO_TRACK_ID + 1),
+            mvhd(audio_timescale(config), track_id.saturating_add(1)),
             audio_trak(config),
-            mvex(&[AUDIO_TRACK_ID]),
+            mvex(&[track_id]),
         ]),
     )
 }
@@ -79,23 +139,26 @@ fn mvhd(timescale: u32, next_track_id: u32) -> Vec<u8> {
     write_full_box(b"mvhd", 0, 0, payload)
 }
 
-fn video_trak(config: &VideoConfig) -> Vec<u8> {
+fn video_trak(config: &VideoTrackConfig) -> Vec<u8> {
     write_box(
         b"trak",
         concat_box(vec![video_tkhd(config), video_mdia(config)]),
     )
 }
 
-fn audio_trak(config: &AudioConfig) -> Vec<u8> {
-    write_box(b"trak", concat_box(vec![audio_tkhd(), audio_mdia(config)]))
+fn audio_trak(config: &AudioTrackConfig) -> Vec<u8> {
+    write_box(
+        b"trak",
+        concat_box(vec![audio_tkhd(config), audio_mdia(config)]),
+    )
 }
 
-fn video_tkhd(config: &VideoConfig) -> Vec<u8> {
-    let (width, height) = dimensions(config);
+fn video_tkhd(config: &VideoTrackConfig) -> Vec<u8> {
+    let (width, height) = dimensions(&config.codec);
     let mut payload = Vec::new();
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
-    write_u32(&mut payload, VIDEO_TRACK_ID);
+    write_u32(&mut payload, config.id.get());
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
@@ -110,11 +173,11 @@ fn video_tkhd(config: &VideoConfig) -> Vec<u8> {
     write_full_box(b"tkhd", 0, 0x0000_0007, payload)
 }
 
-fn audio_tkhd() -> Vec<u8> {
+fn audio_tkhd(config: &AudioTrackConfig) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
-    write_u32(&mut payload, AUDIO_TRACK_ID);
+    write_u32(&mut payload, config.id.get());
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
     write_u32(&mut payload, 0);
@@ -129,22 +192,22 @@ fn audio_tkhd() -> Vec<u8> {
     write_full_box(b"tkhd", 0, 0x0000_0007, payload)
 }
 
-fn video_mdia(config: &VideoConfig) -> Vec<u8> {
+fn video_mdia(config: &VideoTrackConfig) -> Vec<u8> {
     write_box(
         b"mdia",
         concat_box(vec![
-            mdhd(VIDEO_TIMESCALE),
+            mdhd(video_timescale(config)),
             video_hdlr(),
             video_minf(config),
         ]),
     )
 }
 
-fn audio_mdia(config: &AudioConfig) -> Vec<u8> {
+fn audio_mdia(config: &AudioTrackConfig) -> Vec<u8> {
     write_box(
         b"mdia",
         concat_box(vec![
-            mdhd(config.sample_rate),
+            mdhd(audio_timescale(config)),
             audio_hdlr(),
             audio_minf(config),
         ]),
@@ -184,14 +247,14 @@ fn audio_hdlr() -> Vec<u8> {
     write_full_box(b"hdlr", 0, 0, payload)
 }
 
-fn video_minf(config: &VideoConfig) -> Vec<u8> {
+fn video_minf(config: &VideoTrackConfig) -> Vec<u8> {
     write_box(
         b"minf",
         concat_box(vec![vmhd(), dinf(), video_stbl(config)]),
     )
 }
 
-fn audio_minf(config: &AudioConfig) -> Vec<u8> {
+fn audio_minf(config: &AudioTrackConfig) -> Vec<u8> {
     write_box(
         b"minf",
         concat_box(vec![smhd(), dinf(), audio_stbl(config)]),
@@ -221,7 +284,7 @@ fn dinf() -> Vec<u8> {
     write_box(b"dinf", write_full_box(b"dref", 0, 0, dref_payload))
 }
 
-fn video_stbl(config: &VideoConfig) -> Vec<u8> {
+fn video_stbl(config: &VideoTrackConfig) -> Vec<u8> {
     write_box(
         b"stbl",
         concat_box(vec![
@@ -234,7 +297,7 @@ fn video_stbl(config: &VideoConfig) -> Vec<u8> {
     )
 }
 
-fn audio_stbl(config: &AudioConfig) -> Vec<u8> {
+fn audio_stbl(config: &AudioTrackConfig) -> Vec<u8> {
     write_box(
         b"stbl",
         concat_box(vec![
@@ -247,22 +310,23 @@ fn audio_stbl(config: &AudioConfig) -> Vec<u8> {
     )
 }
 
-fn video_stsd(config: &VideoConfig) -> Vec<u8> {
+fn video_stsd(config: &VideoTrackConfig) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u32(&mut payload, 1);
-    payload.extend_from_slice(&avc1(config));
+    payload.extend_from_slice(&config.codec.sample_entry());
     write_full_box(b"stsd", 0, 0, payload)
 }
 
-fn audio_stsd(config: &AudioConfig) -> Vec<u8> {
+fn audio_stsd(config: &AudioTrackConfig) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u32(&mut payload, 1);
-    payload.extend_from_slice(&mp4a(config));
+    payload.extend_from_slice(&config.codec.sample_entry());
     write_full_box(b"stsd", 0, 0, payload)
 }
 
-fn avc1(config: &VideoConfig) -> Vec<u8> {
-    let (width, height) = dimensions(config);
+fn avc1(config: &AvcConfig) -> Vec<u8> {
+    let width = config.width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
+    let height = config.height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
     let mut payload = Vec::new();
     payload.extend_from_slice(&[0; 6]);
     write_u16(&mut payload, 1);
@@ -284,7 +348,7 @@ fn avc1(config: &VideoConfig) -> Vec<u8> {
     write_box(b"avc1", payload)
 }
 
-fn mp4a(config: &AudioConfig) -> Vec<u8> {
+fn mp4a(config: &AacConfig) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&[0; 6]);
     write_u16(&mut payload, 1);
@@ -298,7 +362,7 @@ fn mp4a(config: &AudioConfig) -> Vec<u8> {
     write_box(b"mp4a", payload)
 }
 
-fn esds(config: &AudioConfig) -> Vec<u8> {
+fn esds(config: &AacConfig) -> Vec<u8> {
     let decoder_specific_info = descriptor(0x05, config.audio_specific_config.clone());
 
     let mut decoder_config = Vec::new();
@@ -387,8 +451,9 @@ fn write_matrix(out: &mut Vec<u8>) {
     write_u32(out, 0x4000_0000);
 }
 
-fn dimensions(config: &VideoConfig) -> (u16, u16) {
-    let width = config.width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
-    let height = config.height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
+fn dimensions(config: &VideoCodecConfig) -> (u16, u16) {
+    let (width, height) = Fmp4VideoCodec::dimensions(config);
+    let width = width.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
+    let height = height.unwrap_or(1).clamp(1, u16::MAX as u32) as u16;
     (width, height)
 }

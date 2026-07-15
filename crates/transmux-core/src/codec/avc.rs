@@ -1,11 +1,9 @@
 use crate::error::{CoreError, CoreErrorCode};
-use crate::probe::VideoCodecKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct VideoConfig {
-    pub codec: VideoCodecKind,
+pub struct AvcConfig {
     pub codec_string: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -13,9 +11,7 @@ pub struct VideoConfig {
     pub avcc: Vec<u8>,
 }
 
-pub(crate) fn parse_avc_decoder_configuration_record(
-    data: &[u8],
-) -> Result<VideoConfig, CoreError> {
+pub(crate) fn parse_avc_decoder_configuration_record(data: &[u8]) -> Result<AvcConfig, CoreError> {
     if data.len() < 7 {
         return Err(CoreError::new(
             CoreErrorCode::InvalidCodecConfig,
@@ -84,8 +80,7 @@ pub(crate) fn parse_avc_decoder_configuration_record(
         .map(|(width, height)| (Some(width), Some(height)))
         .unwrap_or((None, None));
 
-    Ok(VideoConfig {
-        codec: VideoCodecKind::Avc,
+    Ok(AvcConfig {
         codec_string: format!("avc1.{profile_idc:02X}{profile_compatibility:02X}{level_idc:02X}"),
         width,
         height,

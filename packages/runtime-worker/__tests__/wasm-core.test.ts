@@ -29,6 +29,14 @@ describe('runtime transmux core host', () => {
         },
       },
       {
+        type: 'trackConfig',
+        data: { kind: 'video' },
+      },
+      {
+        type: 'sample',
+        data: { kind: 'video' },
+      },
+      {
         type: 'fatalError',
         data: {
           code: 'unsupportedVideoCodec',
@@ -58,6 +66,14 @@ describe('runtime transmux core host', () => {
           timescale: 1000,
           bytes: new Uint8Array([1, 2, 3]),
         },
+      },
+      {
+        type: 'trackConfig',
+        data: { kind: 'video' },
+      },
+      {
+        type: 'sample',
+        data: { kind: 'video' },
       },
       {
         type: 'fatalError',

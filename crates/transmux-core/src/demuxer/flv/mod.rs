@@ -1,10 +1,12 @@
-use crate::codec::aac::{AudioConfig, parse_audio_specific_config};
-use crate::codec::avc::{VideoConfig, parse_avc_decoder_configuration_record};
+use crate::codec::aac::parse_audio_specific_config;
+use crate::codec::avc::parse_avc_decoder_configuration_record;
+use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, MediaInfo};
 use crate::metadata::MetadataEvent;
-use crate::probe::{AudioCodecKind, ProbeResult, VideoCodecKind};
-use crate::sample::{AudioSample, SampleTiming, VideoSample};
+use crate::probe::ProbeResult;
+use crate::sample::{EncodedSample, SampleTiming};
+use crate::track::{AudioTrackConfig, TrackClock, TrackConfig, TrackId, VideoTrackConfig};
 
 const FLV_HEADER_MIN_LEN: usize = 9;
 const PREVIOUS_TAG_SIZE_LEN: usize = 4;
@@ -23,6 +25,8 @@ const AVC_PACKET_TYPE_END_OF_SEQUENCE: u8 = 2;
 
 const AAC_PACKET_TYPE_SEQUENCE_HEADER: u8 = 0;
 const AAC_PACKET_TYPE_RAW: u8 = 1;
+
+const FLV_TIMESCALE: u32 = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FlvParseState {
@@ -46,8 +50,8 @@ pub(crate) struct FlvDemuxer {
     buffer: Vec<u8>,
     state: FlvParseState,
     media_info: MediaInfo,
-    video_config: Option<VideoConfig>,
-    audio_config: Option<AudioConfig>,
+    video_config: Option<VideoTrackConfig>,
+    audio_config: Option<AudioTrackConfig>,
 }
 
 impl Default for FlvDemuxer {
@@ -306,13 +310,18 @@ impl FlvDemuxer {
 
         match avc_packet_type {
             AVC_PACKET_TYPE_SEQUENCE_HEADER => {
-                let config = parse_avc_decoder_configuration_record(&payload[5..])?;
-                self.media_info.video = Some(VideoCodecKind::Avc);
-                self.media_info.video_codec = Some(config.codec_string.clone());
-                self.media_info.width = config.width;
-                self.media_info.height = config.height;
-                self.video_config = Some(config.clone());
-                out.push(CoreEvent::VideoConfig(config));
+                let codec =
+                    VideoCodecConfig::Avc(parse_avc_decoder_configuration_record(&payload[5..])?);
+                self.media_info.video = Some(codec.kind());
+                self.media_info.video_codec = Some(codec.codec_string().to_string());
+                (self.media_info.width, self.media_info.height) = codec.dimensions();
+                let track_config = VideoTrackConfig {
+                    id: TrackId::VIDEO,
+                    clock: TrackClock::new(FLV_TIMESCALE, FLV_TIMESCALE)?,
+                    codec,
+                };
+                self.video_config = Some(track_config.clone());
+                out.push(CoreEvent::TrackConfig(TrackConfig::Video(track_config)));
                 out.push(CoreEvent::ProbeResult(self.probe_result()));
                 out.push(CoreEvent::MediaInfo(self.media_info.clone()));
                 Ok(())
@@ -325,14 +334,14 @@ impl FlvDemuxer {
                     ));
                 }
 
-                out.push(CoreEvent::VideoSample(VideoSample {
-                    codec: VideoCodecKind::Avc,
+                out.push(CoreEvent::Sample(EncodedSample::Video {
+                    track_id: TrackId::VIDEO,
                     timing: SampleTiming {
-                        dts_ms,
-                        pts_ms,
-                        duration_ms: None,
+                        dts: dts_ms,
+                        pts: pts_ms,
                     },
-                    is_keyframe: frame_type == 1,
+                    duration: None,
+                    is_sync: frame_type == 1,
                     data: payload[5..].to_vec(),
                 }));
                 Ok(())
@@ -375,33 +384,36 @@ impl FlvDemuxer {
 
         match payload[1] {
             AAC_PACKET_TYPE_SEQUENCE_HEADER => {
-                let config = parse_audio_specific_config(&payload[2..])?;
-                self.media_info.audio = Some(AudioCodecKind::Aac);
-                self.media_info.audio_codec = Some(config.codec_string.clone());
-                self.media_info.audio_sample_rate = Some(config.sample_rate);
-                self.media_info.audio_channel_count = Some(config.channel_count);
-                self.audio_config = Some(config.clone());
-                out.push(CoreEvent::AudioConfig(config));
+                let codec = AudioCodecConfig::Aac(parse_audio_specific_config(&payload[2..])?);
+                self.media_info.audio = Some(codec.kind());
+                self.media_info.audio_codec = Some(codec.codec_string().to_string());
+                self.media_info.audio_sample_rate = Some(codec.sample_rate());
+                self.media_info.audio_channel_count = Some(codec.channel_count());
+                let track_config = AudioTrackConfig {
+                    id: TrackId::AUDIO,
+                    clock: TrackClock::new(FLV_TIMESCALE, codec.sample_rate())?,
+                    codec,
+                };
+                self.audio_config = Some(track_config.clone());
+                out.push(CoreEvent::TrackConfig(TrackConfig::Audio(track_config)));
                 out.push(CoreEvent::ProbeResult(self.probe_result()));
                 out.push(CoreEvent::MediaInfo(self.media_info.clone()));
                 Ok(())
             }
             AAC_PACKET_TYPE_RAW => {
-                let config = self.audio_config.as_ref().ok_or_else(|| {
+                self.audio_config.as_ref().ok_or_else(|| {
                     CoreError::new(
                         CoreErrorCode::InvalidCodecConfig,
                         "FLV AAC media sample arrived before AudioSpecificConfig.",
                     )
                 })?;
-                out.push(CoreEvent::AudioSample(AudioSample {
-                    codec: AudioCodecKind::Aac,
+                out.push(CoreEvent::Sample(EncodedSample::Audio {
+                    track_id: TrackId::AUDIO,
                     timing: SampleTiming {
-                        dts_ms: header.timestamp_ms,
-                        pts_ms: header.timestamp_ms,
-                        duration_ms: None,
+                        dts: header.timestamp_ms,
+                        pts: header.timestamp_ms,
                     },
-                    sample_rate: config.sample_rate,
-                    sample_count: 1024,
+                    duration: 1024,
                     data: payload[2..].to_vec(),
                 }));
                 Ok(())

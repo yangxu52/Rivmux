@@ -1,8 +1,8 @@
 mod support;
 
 use rivmux_transmux_core::{
-    AudioCodecKind, ContainerKind, CoreConfig, CoreErrorCode, CoreEvent, TransmuxCore,
-    VideoCodecKind,
+    AudioCodecConfig, AudioCodecKind, ContainerKind, CoreConfig, CoreErrorCode, CoreEvent,
+    EncodedSample, TrackConfig, TransmuxCore, VideoCodecConfig, VideoCodecKind,
 };
 use support::{
     audio_sample_tag, audio_sequence_header_tag, build_flv, drain, flv_header, minimal_avcc,
@@ -39,41 +39,60 @@ fn parses_flv_header_and_tags_across_arbitrary_chunk_boundaries() {
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            CoreEvent::VideoConfig(config)
-                if config.codec == VideoCodecKind::Avc
-                    && config.codec_string == "avc1.42E01E"
-                    && config.nal_length_size == 4
+            CoreEvent::TrackConfig(TrackConfig::Video(track))
+                if matches!(
+                    &track.codec,
+                    VideoCodecConfig::Avc(config)
+                        if config.codec_string == "avc1.42E01E"
+                            && config.nal_length_size == 4
+                )
+                    && track.clock.input_timescale() == 1_000
+                    && track.clock.fmp4_timescale() == 1_000
         )
     }));
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            CoreEvent::AudioConfig(config)
-                if config.codec == AudioCodecKind::Aac
-                    && config.codec_string == "mp4a.40.2"
-                    && config.sample_rate == 44_100
-                    && config.channel_count == 2
+            CoreEvent::TrackConfig(TrackConfig::Audio(track))
+                if matches!(
+                    &track.codec,
+                    AudioCodecConfig::Aac(config)
+                        if config.codec_string == "mp4a.40.2"
+                            && config.sample_rate == 44_100
+                            && config.channel_count == 2
+                )
+                    && track.clock.input_timescale() == 1_000
+                    && track.clock.fmp4_timescale() == 44_100
         )
     }));
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            CoreEvent::VideoSample(sample)
-                if sample.is_keyframe
-                    && sample.timing.dts_ms == 0
-                    && sample.timing.pts_ms == 2
-                    && sample.data == [0x00, 0x00, 0x00, 0x01, 0x65]
+            CoreEvent::Sample(EncodedSample::Video {
+                timing,
+                is_sync,
+                data,
+                ..
+            })
+                if *is_sync
+                    && timing.dts == 0
+                    && timing.pts == 2
+                    && *data == [0x00, 0x00, 0x00, 0x01, 0x65]
         )
     }));
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            CoreEvent::AudioSample(sample)
-                if sample.sample_rate == 44_100
-                    && sample.sample_count == 1024
-                    && sample.timing.dts_ms == 0
-                    && sample.timing.pts_ms == 0
-                    && sample.data == [0x21, 0x22, 0x23]
+            CoreEvent::Sample(EncodedSample::Audio {
+                timing,
+                duration,
+                data,
+                ..
+            })
+                if *duration == 1024
+                    && timing.dts == 0
+                    && timing.pts == 0
+                    && *data == [0x21, 0x22, 0x23]
         )
     }));
 }

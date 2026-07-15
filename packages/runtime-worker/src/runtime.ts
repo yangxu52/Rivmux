@@ -355,10 +355,8 @@ export class RuntimeWorker {
           await this.applyLatencyPolicy()
           break
         case 'probeResult':
-        case 'videoConfig':
-        case 'audioConfig':
-        case 'videoSample':
-        case 'audioSample':
+        case 'trackConfig':
+        case 'sample':
         case 'metadata':
         case 'discontinuity':
           break

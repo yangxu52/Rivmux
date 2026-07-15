@@ -1,11 +1,9 @@
 use crate::error::{CoreError, CoreErrorCode};
-use crate::probe::AudioCodecKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct AudioConfig {
-    pub codec: AudioCodecKind,
+pub struct AacConfig {
     pub codec_string: String,
     pub object_type: u8,
     pub sample_rate: u32,
@@ -13,7 +11,7 @@ pub struct AudioConfig {
     pub audio_specific_config: Vec<u8>,
 }
 
-pub(crate) fn parse_audio_specific_config(data: &[u8]) -> Result<AudioConfig, CoreError> {
+pub(crate) fn parse_audio_specific_config(data: &[u8]) -> Result<AacConfig, CoreError> {
     if data.len() < 2 {
         return Err(CoreError::new(
             CoreErrorCode::InvalidCodecConfig,
@@ -45,8 +43,7 @@ pub(crate) fn parse_audio_specific_config(data: &[u8]) -> Result<AudioConfig, Co
         ));
     }
 
-    Ok(AudioConfig {
-        codec: AudioCodecKind::Aac,
+    Ok(AacConfig {
         codec_string: "mp4a.40.2".to_string(),
         object_type,
         sample_rate,

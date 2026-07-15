@@ -1,9 +1,8 @@
-use crate::codec::aac::AudioConfig;
-use crate::codec::avc::VideoConfig;
 use crate::error::CoreError;
 use crate::metadata::MetadataEvent;
 use crate::probe::{AudioCodecKind, ContainerKind, ProbeResult, VideoCodecKind};
-use crate::sample::{AudioSample, VideoSample};
+use crate::sample::EncodedSample;
+use crate::track::TrackConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -16,10 +15,8 @@ pub enum CoreEvent {
     MediaInfo(MediaInfo),
     InitSegment(InitSegment),
     MediaSegment(MediaSegment),
-    VideoConfig(VideoConfig),
-    AudioConfig(AudioConfig),
-    VideoSample(VideoSample),
-    AudioSample(AudioSample),
+    TrackConfig(TrackConfig),
+    Sample(EncodedSample),
     Metadata(MetadataEvent),
     Warning(CoreWarning),
     FatalError(CoreError),

@@ -60,10 +60,8 @@ export type CoreEvent =
   | { type: 'mediaInfo'; data: CoreMediaInfo }
   | { type: 'initSegment'; data: CoreInitSegment }
   | { type: 'mediaSegment'; data: CoreMediaSegment }
-  | { type: 'videoConfig'; data: unknown }
-  | { type: 'audioConfig'; data: unknown }
-  | { type: 'videoSample'; data: unknown }
-  | { type: 'audioSample'; data: unknown }
+  | { type: 'trackConfig'; data: unknown }
+  | { type: 'sample'; data: unknown }
   | { type: 'metadata'; data: unknown }
   | { type: 'warning'; data: CoreWarning }
   | { type: 'fatalError'; data: CoreError }
@@ -171,10 +169,8 @@ function normalizeCoreEvent(value: unknown): CoreEvent {
       return { type: 'initSegment', data: normalizeInitSegment(data) }
     case 'mediaSegment':
       return { type: 'mediaSegment', data: normalizeMediaSegment(data) }
-    case 'videoConfig':
-    case 'audioConfig':
-    case 'videoSample':
-    case 'audioSample':
+    case 'trackConfig':
+    case 'sample':
     case 'metadata':
     case 'discontinuity':
       return { type: value.type, data }

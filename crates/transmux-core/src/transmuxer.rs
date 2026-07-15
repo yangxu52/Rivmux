@@ -70,37 +70,21 @@ impl TransmuxCore {
     fn process_demux_events(&mut self, demux_events: Vec<CoreEvent>) -> Result<(), CoreError> {
         for event in demux_events {
             match event {
-                CoreEvent::VideoConfig(config) => {
-                    self.events.push(CoreEvent::VideoConfig(config.clone()));
+                CoreEvent::TrackConfig(config) => {
+                    self.events.push(CoreEvent::TrackConfig(config.clone()));
+                    self.timeline.on_track_config(&config);
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.on_video_config(config, &mut mux_events);
+                    let mux_result = self.muxer.on_track_config(config, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }
-                CoreEvent::VideoSample(sample) => {
-                    let normalized = self.timeline.normalize_video_sample(sample);
+                CoreEvent::Sample(sample) => {
+                    let normalized = self.timeline.normalize_sample(sample);
                     self.events.extend(normalized.events);
                     let sample = normalized.sample;
-                    self.events.push(CoreEvent::VideoSample(sample.clone()));
+                    self.events.push(CoreEvent::Sample(sample.clone()));
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.push_video(sample, &mut mux_events);
-                    self.events.extend(mux_events);
-                    self.capture_result(mux_result)?;
-                }
-                CoreEvent::AudioConfig(config) => {
-                    self.events.push(CoreEvent::AudioConfig(config.clone()));
-                    let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.on_audio_config(config, &mut mux_events);
-                    self.events.extend(mux_events);
-                    self.capture_result(mux_result)?;
-                }
-                CoreEvent::AudioSample(sample) => {
-                    let normalized = self.timeline.normalize_audio_sample(sample);
-                    self.events.extend(normalized.events);
-                    let sample = normalized.sample;
-                    self.events.push(CoreEvent::AudioSample(sample.clone()));
-                    let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.push_audio(sample, &mut mux_events);
+                    let mux_result = self.muxer.push_sample(sample, &mut mux_events);
                     self.events.extend(mux_events);
                     self.capture_result(mux_result)?;
                 }

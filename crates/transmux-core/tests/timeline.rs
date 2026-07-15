@@ -1,6 +1,6 @@
 mod support;
 
-use rivmux_transmux_core::{CoreConfig, CoreEvent, TransmuxCore};
+use rivmux_transmux_core::{CoreConfig, CoreEvent, EncodedSample, TransmuxCore};
 use support::{build_flv, drain, minimal_avcc, video_sample_tag, video_sequence_header_tag};
 
 #[test]
@@ -18,9 +18,9 @@ fn normalizes_media_segments_to_first_media_dts() {
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            CoreEvent::VideoSample(sample)
-                if sample.timing.dts_ms == 0
-                    && sample.timing.pts_ms == 10
+            CoreEvent::Sample(EncodedSample::Video { timing, .. })
+                if timing.dts == 0
+                    && timing.pts == 10
         )
     }));
     assert!(events.iter().any(|event| {
