@@ -1,11 +1,14 @@
-use crate::codec::aac::parse_audio_specific_config;
-use crate::codec::avc::parse_avc_decoder_configuration_record;
-use crate::codec::{AudioCodecConfig, VideoCodecConfig};
+use crate::codec::aac::AacNormalizer;
+use crate::codec::avc::AvcNormalizer;
+use crate::codec::normalizer::{
+    AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData, VideoAccessUnit,
+    VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+};
 use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, MediaInfo};
 use crate::metadata::MetadataEvent;
 use crate::probe::ProbeResult;
-use crate::sample::{EncodedSample, SampleTiming};
+use crate::sample::SampleTiming;
 use crate::track::{AudioTrackConfig, TrackClock, TrackConfig, TrackId, VideoTrackConfig};
 
 const FLV_HEADER_MIN_LEN: usize = 9;
@@ -50,8 +53,8 @@ pub(crate) struct FlvDemuxer {
     buffer: Vec<u8>,
     state: FlvParseState,
     media_info: MediaInfo,
-    video_config: Option<VideoTrackConfig>,
-    audio_config: Option<AudioTrackConfig>,
+    avc_normalizer: AvcNormalizer,
+    aac_normalizer: AacNormalizer,
 }
 
 impl Default for FlvDemuxer {
@@ -68,8 +71,8 @@ impl FlvDemuxer {
             buffer: Vec::new(),
             state: FlvParseState::Header,
             media_info: MediaInfo::flv(),
-            video_config: None,
-            audio_config: None,
+            avc_normalizer: AvcNormalizer::default(),
+            aac_normalizer: AacNormalizer::default(),
         }
     }
 
@@ -78,15 +81,20 @@ impl FlvDemuxer {
         self.parse_available(out)
     }
 
-    pub(crate) fn flush(&mut self, _out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
-        if self.buffer.is_empty() {
-            return Ok(());
+    pub(crate) fn flush(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
+        if !self.buffer.is_empty() {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "FLV input ended with a partial structure.",
+            ));
         }
 
-        Err(CoreError::new(
-            CoreErrorCode::InvalidContainerData,
-            "FLV input ended with a partial structure.",
-        ))
+        let mut video_events = Vec::new();
+        self.avc_normalizer.flush(&mut video_events)?;
+        self.process_video_normalizer_events(video_events, out)?;
+        let mut audio_events = Vec::new();
+        self.aac_normalizer.flush(&mut audio_events)?;
+        self.process_audio_normalizer_events(audio_events, out)
     }
 
     fn parse_available(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
@@ -310,41 +318,26 @@ impl FlvDemuxer {
 
         match avc_packet_type {
             AVC_PACKET_TYPE_SEQUENCE_HEADER => {
-                let codec =
-                    VideoCodecConfig::Avc(parse_avc_decoder_configuration_record(&payload[5..])?);
-                self.media_info.video = Some(codec.kind());
-                self.media_info.video_codec = Some(codec.codec_string().to_string());
-                (self.media_info.width, self.media_info.height) = codec.dimensions();
-                let track_config = VideoTrackConfig {
-                    id: TrackId::VIDEO,
-                    clock: TrackClock::new(FLV_TIMESCALE, FLV_TIMESCALE)?,
-                    codec,
-                };
-                self.video_config = Some(track_config.clone());
-                out.push(CoreEvent::TrackConfig(TrackConfig::Video(track_config)));
-                out.push(CoreEvent::ProbeResult(self.probe_result()));
-                out.push(CoreEvent::MediaInfo(self.media_info.clone()));
-                Ok(())
+                let mut codec_events = Vec::new();
+                self.avc_normalizer
+                    .on_configuration(&payload[5..], &mut codec_events)?;
+                self.process_video_normalizer_events(codec_events, out)
             }
             AVC_PACKET_TYPE_NALU => {
-                if self.video_config.is_none() {
-                    return Err(CoreError::new(
-                        CoreErrorCode::InvalidCodecConfig,
-                        "FLV AVC media sample arrived before AVC sequence header.",
-                    ));
-                }
-
-                out.push(CoreEvent::Sample(EncodedSample::Video {
-                    track_id: TrackId::VIDEO,
-                    timing: SampleTiming {
-                        dts: dts_ms,
-                        pts: pts_ms,
+                let mut codec_events = Vec::new();
+                self.avc_normalizer.push_access_unit(
+                    VideoAccessUnit {
+                        track_id: TrackId::VIDEO,
+                        timing: SampleTiming {
+                            dts: dts_ms,
+                            pts: pts_ms,
+                        },
+                        is_sync: frame_type == 1,
+                        data: VideoSampleData::LengthPrefixedNalus(&payload[5..]),
                     },
-                    duration: None,
-                    is_sync: frame_type == 1,
-                    data: payload[5..].to_vec(),
-                }));
-                Ok(())
+                    &mut codec_events,
+                )?;
+                self.process_video_normalizer_events(codec_events, out)
             }
             AVC_PACKET_TYPE_END_OF_SEQUENCE => Ok(()),
             other => Err(CoreError::new(
@@ -352,6 +345,32 @@ impl FlvDemuxer {
                 format!("Unsupported AVC packet type {other}."),
             )),
         }
+    }
+
+    fn process_video_normalizer_events(
+        &mut self,
+        codec_events: Vec<VideoNormalizerEvent>,
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        for event in codec_events {
+            match event {
+                VideoNormalizerEvent::Configuration(codec) => {
+                    self.media_info.video = Some(codec.kind());
+                    self.media_info.video_codec = Some(codec.codec_string().to_string());
+                    (self.media_info.width, self.media_info.height) = codec.dimensions();
+                    let track_config = VideoTrackConfig {
+                        id: TrackId::VIDEO,
+                        clock: TrackClock::new(FLV_TIMESCALE, FLV_TIMESCALE)?,
+                        codec,
+                    };
+                    out.push(CoreEvent::TrackConfig(TrackConfig::Video(track_config)));
+                    out.push(CoreEvent::ProbeResult(self.probe_result()));
+                    out.push(CoreEvent::MediaInfo(self.media_info.clone()));
+                }
+                VideoNormalizerEvent::Sample(sample) => out.push(CoreEvent::Sample(sample)),
+            }
+        }
+        Ok(())
     }
 
     fn process_audio_tag(
@@ -384,45 +403,59 @@ impl FlvDemuxer {
 
         match payload[1] {
             AAC_PACKET_TYPE_SEQUENCE_HEADER => {
-                let codec = AudioCodecConfig::Aac(parse_audio_specific_config(&payload[2..])?);
-                self.media_info.audio = Some(codec.kind());
-                self.media_info.audio_codec = Some(codec.codec_string().to_string());
-                self.media_info.audio_sample_rate = Some(codec.sample_rate());
-                self.media_info.audio_channel_count = Some(codec.channel_count());
-                let track_config = AudioTrackConfig {
-                    id: TrackId::AUDIO,
-                    clock: TrackClock::new(FLV_TIMESCALE, codec.sample_rate())?,
-                    codec,
-                };
-                self.audio_config = Some(track_config.clone());
-                out.push(CoreEvent::TrackConfig(TrackConfig::Audio(track_config)));
-                out.push(CoreEvent::ProbeResult(self.probe_result()));
-                out.push(CoreEvent::MediaInfo(self.media_info.clone()));
-                Ok(())
+                let mut codec_events = Vec::new();
+                self.aac_normalizer
+                    .on_configuration(&payload[2..], &mut codec_events)?;
+                self.process_audio_normalizer_events(codec_events, out)
             }
             AAC_PACKET_TYPE_RAW => {
-                self.audio_config.as_ref().ok_or_else(|| {
-                    CoreError::new(
-                        CoreErrorCode::InvalidCodecConfig,
-                        "FLV AAC media sample arrived before AudioSpecificConfig.",
-                    )
-                })?;
-                out.push(CoreEvent::Sample(EncodedSample::Audio {
-                    track_id: TrackId::AUDIO,
-                    timing: SampleTiming {
-                        dts: header.timestamp_ms,
-                        pts: header.timestamp_ms,
+                let mut codec_events = Vec::new();
+                self.aac_normalizer.push_access_unit(
+                    AudioAccessUnit {
+                        track_id: TrackId::AUDIO,
+                        timing: SampleTiming {
+                            dts: header.timestamp_ms,
+                            pts: header.timestamp_ms,
+                        },
+                        input_timescale: FLV_TIMESCALE,
+                        data: AudioSampleData::RawAac(&payload[2..]),
                     },
-                    duration: 1024,
-                    data: payload[2..].to_vec(),
-                }));
-                Ok(())
+                    &mut codec_events,
+                )?;
+                self.process_audio_normalizer_events(codec_events, out)
             }
             other => Err(CoreError::new(
                 CoreErrorCode::InvalidCodecConfig,
                 format!("Unsupported AAC packet type {other}."),
             )),
         }
+    }
+
+    fn process_audio_normalizer_events(
+        &mut self,
+        codec_events: Vec<AudioNormalizerEvent>,
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        for event in codec_events {
+            match event {
+                AudioNormalizerEvent::Configuration(codec) => {
+                    self.media_info.audio = Some(codec.kind());
+                    self.media_info.audio_codec = Some(codec.codec_string().to_string());
+                    self.media_info.audio_sample_rate = Some(codec.sample_rate());
+                    self.media_info.audio_channel_count = Some(codec.channel_count());
+                    let track_config = AudioTrackConfig {
+                        id: TrackId::AUDIO,
+                        clock: TrackClock::new(FLV_TIMESCALE, codec.sample_rate())?,
+                        codec,
+                    };
+                    out.push(CoreEvent::TrackConfig(TrackConfig::Audio(track_config)));
+                    out.push(CoreEvent::ProbeResult(self.probe_result()));
+                    out.push(CoreEvent::MediaInfo(self.media_info.clone()));
+                }
+                AudioNormalizerEvent::Sample(sample) => out.push(CoreEvent::Sample(sample)),
+            }
+        }
+        Ok(())
     }
 
     fn probe_result(&self) -> ProbeResult {

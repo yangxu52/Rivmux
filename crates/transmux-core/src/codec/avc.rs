@@ -1,4 +1,9 @@
+use crate::codec::VideoCodecConfig;
+use crate::codec::normalizer::{
+    VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+};
 use crate::error::{CoreError, CoreErrorCode};
+use crate::sample::EncodedSample;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -11,82 +16,378 @@ pub struct AvcConfig {
     pub avcc: Vec<u8>,
 }
 
-pub(crate) fn parse_avc_decoder_configuration_record(data: &[u8]) -> Result<AvcConfig, CoreError> {
-    if data.len() < 7 {
-        return Err(CoreError::new(
-            CoreErrorCode::InvalidCodecConfig,
-            "AVCDecoderConfigurationRecord is too short.",
-        ));
-    }
-
-    if data[0] != 1 {
-        return Err(CoreError::new(
-            CoreErrorCode::InvalidCodecConfig,
-            "Unsupported AVCDecoderConfigurationRecord version.",
-        ));
-    }
-
-    let profile_idc = data[1];
-    let profile_compatibility = data[2];
-    let level_idc = data[3];
-    let length_size_minus_one = data[4] & 0b0000_0011;
-    if length_size_minus_one == 2 {
-        return Err(CoreError::new(
-            CoreErrorCode::InvalidCodecConfig,
-            "AVC NAL unit length size of 3 bytes is reserved.",
-        ));
-    }
-    let nal_length_size = length_size_minus_one + 1;
-
-    let mut offset = 5;
-    let sps_count = data[offset] & 0b0001_1111;
-    offset += 1;
-    if sps_count == 0 {
-        return Err(CoreError::new(
-            CoreErrorCode::InvalidCodecConfig,
-            "AVC configuration is missing SPS.",
-        ));
-    }
-
-    let mut dimensions = None;
-    for _ in 0..sps_count {
-        let sps_length = read_u16(data, offset)? as usize;
-        offset += 2;
-        ensure_available(data, offset, sps_length, "SPS")?;
-        if dimensions.is_none() {
-            dimensions = parse_sps_dimensions(&data[offset..offset + sps_length]).ok();
+impl AvcConfig {
+    pub(crate) fn from_avcc(data: &[u8]) -> Result<Self, CoreError> {
+        if data.len() < 7 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVCDecoderConfigurationRecord is too short.",
+            ));
         }
-        offset += sps_length;
+
+        if data[0] != 1 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "Unsupported AVCDecoderConfigurationRecord version.",
+            ));
+        }
+
+        let profile_idc = data[1];
+        let profile_compatibility = data[2];
+        let level_idc = data[3];
+        let length_size_minus_one = data[4] & 0b0000_0011;
+        if length_size_minus_one == 2 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC NAL unit length size of 3 bytes is reserved.",
+            ));
+        }
+        let nal_length_size = length_size_minus_one + 1;
+
+        let mut offset = 5;
+        let sps_count = data[offset] & 0b0001_1111;
+        offset += 1;
+        if sps_count == 0 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC configuration is missing SPS.",
+            ));
+        }
+
+        let mut dimensions = None;
+        for _ in 0..sps_count {
+            let sps_length = read_u16(data, offset)? as usize;
+            offset += 2;
+            ensure_available(data, offset, sps_length, "SPS")?;
+            if dimensions.is_none() {
+                dimensions = parse_sps_dimensions(&data[offset..offset + sps_length]).ok();
+            }
+            offset += sps_length;
+        }
+
+        ensure_available(data, offset, 1, "PPS count")?;
+        let pps_count = data[offset];
+        offset += 1;
+        if pps_count == 0 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC configuration is missing PPS.",
+            ));
+        }
+
+        for _ in 0..pps_count {
+            let pps_length = read_u16(data, offset)? as usize;
+            offset += 2;
+            ensure_available(data, offset, pps_length, "PPS")?;
+            offset += pps_length;
+        }
+
+        let (width, height) = dimensions
+            .map(|(width, height)| (Some(width), Some(height)))
+            .unwrap_or((None, None));
+
+        Ok(Self {
+            codec_string: format!(
+                "avc1.{profile_idc:02X}{profile_compatibility:02X}{level_idc:02X}"
+            ),
+            width,
+            height,
+            nal_length_size,
+            avcc: data.to_vec(),
+        })
     }
 
-    ensure_available(data, offset, 1, "PPS count")?;
-    let pps_count = data[offset];
-    offset += 1;
-    if pps_count == 0 {
-        return Err(CoreError::new(
+    pub(crate) fn from_parameter_sets(sps: &[&[u8]], pps: &[&[u8]]) -> Result<Self, CoreError> {
+        if sps.is_empty() || pps.is_empty() {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC parameter sets must include both SPS and PPS.",
+            ));
+        }
+        if sps.len() > 31 || pps.len() > usize::from(u8::MAX) {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC parameter set count exceeds AVCDecoderConfigurationRecord limits.",
+            ));
+        }
+
+        let first_sps = sps[0];
+        if first_sps.len() < 4 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC SPS is too short to build AVCDecoderConfigurationRecord.",
+            ));
+        }
+
+        let mut avcc = Vec::new();
+        avcc.extend_from_slice(&[1, first_sps[1], first_sps[2], first_sps[3], 0xFF]);
+        avcc.push(0xE0 | (sps.len() as u8));
+        for parameter_set in sps {
+            write_parameter_set(&mut avcc, parameter_set, "SPS")?;
+        }
+        avcc.push(pps.len() as u8);
+        for parameter_set in pps {
+            write_parameter_set(&mut avcc, parameter_set, "PPS")?;
+        }
+        Self::from_avcc(&avcc)
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AvcNormalizer {
+    config: Option<AvcConfig>,
+}
+
+impl VideoAccessUnitNormalizer for AvcNormalizer {
+    fn on_configuration(
+        &mut self,
+        data: &[u8],
+        out: &mut Vec<VideoNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        let config = AvcConfig::from_avcc(data)?;
+        self.config = Some(config.clone());
+        out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Avc(
+            config,
+        )));
+        Ok(())
+    }
+
+    fn push_access_unit(
+        &mut self,
+        unit: VideoAccessUnit<'_>,
+        out: &mut Vec<VideoNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        let (data, is_sync) = match unit.data {
+            VideoSampleData::LengthPrefixedNalus(data) => {
+                let config = self.config.as_ref().ok_or_else(|| {
+                    CoreError::new(
+                        CoreErrorCode::InvalidCodecConfig,
+                        "AVC media sample arrived before AVCDecoderConfigurationRecord.",
+                    )
+                })?;
+                validate_length_prefixed_nalus(data, config.nal_length_size)?;
+                (data.to_vec(), unit.is_sync)
+            }
+            VideoSampleData::AnnexB(data) => {
+                self.normalize_annex_b_access_unit(data, unit.is_sync, out)?
+            }
+        };
+        out.push(VideoNormalizerEvent::Sample(EncodedSample::Video {
+            track_id: unit.track_id,
+            timing: unit.timing,
+            duration: None,
+            is_sync,
+            data,
+        }));
+        Ok(())
+    }
+
+    fn flush(&mut self, _out: &mut Vec<VideoNormalizerEvent>) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+impl AvcNormalizer {
+    fn normalize_annex_b_access_unit(
+        &mut self,
+        data: &[u8],
+        is_sync: bool,
+        out: &mut Vec<VideoNormalizerEvent>,
+    ) -> Result<(Vec<u8>, bool), CoreError> {
+        let nalus = split_annex_b_nalus(data)?;
+        let sps: Vec<&[u8]> = nalus
+            .iter()
+            .copied()
+            .filter(|nalu| nalu_type(nalu) == Some(7))
+            .collect();
+        let pps: Vec<&[u8]> = nalus
+            .iter()
+            .copied()
+            .filter(|nalu| nalu_type(nalu) == Some(8))
+            .collect();
+        if !sps.is_empty() || !pps.is_empty() {
+            let config = AvcConfig::from_parameter_sets(&sps, &pps)?;
+            if self.config.as_ref() != Some(&config) {
+                self.config = Some(config.clone());
+                out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Avc(
+                    config,
+                )));
+            }
+        }
+
+        let config = self.config.as_ref().ok_or_else(|| {
+            CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AVC Annex-B access unit arrived before AVC parameter sets.",
+            )
+        })?;
+        let is_sync = is_sync || nalus.iter().any(|nalu| nalu_type(nalu) == Some(5));
+        Ok((
+            length_prefix_nalus(&nalus, config.nal_length_size)?,
+            is_sync,
+        ))
+    }
+}
+
+fn write_parameter_set(
+    out: &mut Vec<u8>,
+    parameter_set: &[u8],
+    name: &str,
+) -> Result<(), CoreError> {
+    let length = u16::try_from(parameter_set.len()).map_err(|_| {
+        CoreError::new(
             CoreErrorCode::InvalidCodecConfig,
-            "AVC configuration is missing PPS.",
+            format!("AVC {name} exceeds AVCDecoderConfigurationRecord limits."),
+        )
+    })?;
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(parameter_set);
+    Ok(())
+}
+
+fn split_annex_b_nalus(data: &[u8]) -> Result<Vec<&[u8]>, CoreError> {
+    let Some((first_start, first_length)) = find_start_code(data, 0) else {
+        return Err(CoreError::new(
+            CoreErrorCode::InvalidContainerData,
+            "AVC Annex-B access unit is missing a start code.",
+        ));
+    };
+    if data[..first_start].iter().any(|byte| *byte != 0) {
+        return Err(CoreError::new(
+            CoreErrorCode::InvalidContainerData,
+            "AVC Annex-B access unit has data before its first start code.",
         ));
     }
 
-    for _ in 0..pps_count {
-        let pps_length = read_u16(data, offset)? as usize;
-        offset += 2;
-        ensure_available(data, offset, pps_length, "PPS")?;
-        offset += pps_length;
+    let mut nalus = Vec::new();
+    let mut nalu_start = first_start + first_length;
+    while nalu_start < data.len() {
+        let next_start_code = find_start_code(data, nalu_start);
+        let nalu_end = next_start_code.map_or(data.len(), |(offset, _)| offset);
+        let nalu = trim_trailing_zero_bytes(&data[nalu_start..nalu_end]);
+        if nalu.is_empty() {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC Annex-B access unit contains an empty NAL unit.",
+            ));
+        }
+        nalus.push(nalu);
+
+        let Some((next_offset, next_length)) = next_start_code else {
+            break;
+        };
+        nalu_start = next_offset + next_length;
     }
 
-    let (width, height) = dimensions
-        .map(|(width, height)| (Some(width), Some(height)))
-        .unwrap_or((None, None));
+    if nalus.is_empty() {
+        return Err(CoreError::new(
+            CoreErrorCode::InvalidContainerData,
+            "AVC Annex-B access unit does not contain a NAL unit.",
+        ));
+    }
+    Ok(nalus)
+}
 
-    Ok(AvcConfig {
-        codec_string: format!("avc1.{profile_idc:02X}{profile_compatibility:02X}{level_idc:02X}"),
-        width,
-        height,
-        nal_length_size,
-        avcc: data.to_vec(),
-    })
+fn find_start_code(data: &[u8], start: usize) -> Option<(usize, usize)> {
+    let mut index = start;
+    while index + 3 <= data.len() {
+        if data[index] == 0 && data[index + 1] == 0 {
+            if data.get(index + 2) == Some(&0) && data.get(index + 3) == Some(&1) {
+                return Some((index, 4));
+            }
+            if data.get(index + 2) == Some(&1) {
+                return Some((index, 3));
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn trim_trailing_zero_bytes(mut nalu: &[u8]) -> &[u8] {
+    while nalu.last() == Some(&0) {
+        nalu = &nalu[..nalu.len() - 1];
+    }
+    nalu
+}
+
+fn nalu_type(nalu: &[u8]) -> Option<u8> {
+    nalu.first().map(|byte| byte & 0x1F)
+}
+
+fn length_prefix_nalus(nalus: &[&[u8]], nal_length_size: u8) -> Result<Vec<u8>, CoreError> {
+    let nal_length_size = usize::from(nal_length_size);
+    let max_nalu_length = (1_u64 << (nal_length_size * 8)) - 1;
+    let payload_length = nalus
+        .iter()
+        .try_fold(0usize, |total, nalu| {
+            total
+                .checked_add(nal_length_size)
+                .and_then(|value| value.checked_add(nalu.len()))
+        })
+        .ok_or_else(|| {
+            CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC Annex-B access unit output size overflows.",
+            )
+        })?;
+    let mut out = Vec::with_capacity(payload_length);
+    for nalu in nalus {
+        let length = u64::try_from(nalu.len()).map_err(|_| {
+            CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC Annex-B NAL length overflows.",
+            )
+        })?;
+        if length > max_nalu_length {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC Annex-B NAL exceeds the configured length-prefix capacity.",
+            ));
+        }
+        for index in (0..nal_length_size).rev() {
+            out.push((length >> (index * 8)) as u8);
+        }
+        out.extend_from_slice(nalu);
+    }
+    Ok(out)
+}
+
+fn validate_length_prefixed_nalus(data: &[u8], nal_length_size: u8) -> Result<(), CoreError> {
+    let mut offset = 0;
+    let nal_length_size = usize::from(nal_length_size);
+    while offset < data.len() {
+        let length_end = offset.checked_add(nal_length_size).ok_or_else(|| {
+            CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC access unit NAL length offset overflows.",
+            )
+        })?;
+        let length_bytes = data.get(offset..length_end).ok_or_else(|| {
+            CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC access unit ends before a NAL length prefix.",
+            )
+        })?;
+        let nal_length = length_bytes
+            .iter()
+            .fold(0usize, |value, byte| (value << 8) | usize::from(*byte));
+        offset = length_end;
+        let nal_end = offset.checked_add(nal_length).ok_or_else(|| {
+            CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC access unit NAL length overflows.",
+            )
+        })?;
+        if nal_end > data.len() {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "AVC access unit has a truncated NAL unit.",
+            ));
+        }
+        offset = nal_end;
+    }
+    Ok(())
 }
 
 fn parse_sps_dimensions(sps: &[u8]) -> Result<(u32, u32), CoreError> {
@@ -337,15 +638,119 @@ fn ensure_available(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_avc_decoder_configuration_record;
+    use super::{AvcConfig, AvcNormalizer};
+    use crate::codec::normalizer::{
+        VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+    };
+    use crate::error::CoreErrorCode;
+    use crate::sample::{EncodedSample, SampleTiming};
+    use crate::track::TrackId;
 
     #[test]
     fn parses_baseline_sps_dimensions() {
-        let config = parse_avc_decoder_configuration_record(&baseline_320x240_avcc()).unwrap();
+        let config = AvcConfig::from_avcc(&baseline_320x240_avcc()).unwrap();
 
         assert_eq!(config.codec_string, "avc1.42C01E");
         assert_eq!(config.width, Some(320));
         assert_eq!(config.height, Some(240));
+    }
+
+    #[test]
+    fn normalizes_length_prefixed_access_unit_after_configuration() {
+        let mut normalizer = AvcNormalizer::default();
+        let mut events = Vec::new();
+
+        normalizer
+            .on_configuration(&minimal_avcc(), &mut events)
+            .unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Configuration(_)]
+        ));
+
+        events.clear();
+        normalizer
+            .push_access_unit(
+                VideoAccessUnit {
+                    track_id: TrackId::VIDEO,
+                    timing: SampleTiming { dts: 10, pts: 12 },
+                    is_sync: true,
+                    data: VideoSampleData::LengthPrefixedNalus(&[0, 0, 0, 1, 0x65]),
+                },
+                &mut events,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Sample(EncodedSample::Video {
+                track_id,
+                timing: SampleTiming { dts: 10, pts: 12 },
+                is_sync: true,
+                data,
+                ..
+            })] if *track_id == TrackId::VIDEO && *data == [0, 0, 0, 1, 0x65]
+        ));
+    }
+
+    #[test]
+    fn rejects_truncated_length_prefixed_nalu() {
+        let mut normalizer = AvcNormalizer::default();
+        let mut events = Vec::new();
+        normalizer
+            .on_configuration(&minimal_avcc(), &mut events)
+            .unwrap();
+
+        let error = normalizer
+            .push_access_unit(
+                VideoAccessUnit {
+                    track_id: TrackId::VIDEO,
+                    timing: SampleTiming { dts: 0, pts: 0 },
+                    is_sync: true,
+                    data: VideoSampleData::LengthPrefixedNalus(&[0, 0, 0, 2, 0x65]),
+                },
+                &mut events,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+    }
+
+    #[test]
+    fn normalizes_annex_b_access_unit_and_derives_configuration() {
+        let mut normalizer = AvcNormalizer::default();
+        let mut events = Vec::new();
+        let access_unit = [
+            0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1E, 0, 0, 1, 0x68, 0xCE, 0, 0, 1, 0x65,
+        ];
+
+        normalizer
+            .push_access_unit(
+                VideoAccessUnit {
+                    track_id: TrackId::VIDEO,
+                    timing: SampleTiming { dts: 0, pts: 0 },
+                    is_sync: false,
+                    data: VideoSampleData::AnnexB(&access_unit),
+                },
+                &mut events,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                VideoNormalizerEvent::Configuration(_),
+                VideoNormalizerEvent::Sample(EncodedSample::Video {
+                    is_sync: true,
+                    data,
+                    ..
+                })
+            ] if *data == [
+                0, 0, 0, 4, 0x67, 0x42, 0x00, 0x1E,
+                0, 0, 0, 2, 0x68, 0xCE,
+                0, 0, 0, 1, 0x65,
+            ]
+        ));
     }
 
     fn baseline_320x240_avcc() -> Vec<u8> {
@@ -353,6 +758,13 @@ mod tests {
             1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0x00, 0x16, 0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x05, 0x07,
             0xEC, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0F, 0x23, 0xC5, 0x8B,
             0xA8, 0x01, 0x00, 0x04, 0x68, 0xCE, 0x0F, 0xC8,
+        ]
+    }
+
+    fn minimal_avcc() -> Vec<u8> {
+        vec![
+            1, 0x42, 0xE0, 0x1E, 0xFF, 0xE1, 0x00, 0x04, 0x67, 0x42, 0x00, 0x1E, 0x01, 0x00, 0x02,
+            0x68, 0xCE,
         ]
     }
 }

@@ -1,5 +1,6 @@
 pub(crate) mod aac;
 pub(crate) mod avc;
+pub(crate) mod normalizer;
 
 use crate::codec::aac::AacConfig;
 use crate::codec::avc::AvcConfig;
