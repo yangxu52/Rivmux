@@ -1,5 +1,6 @@
 import { LatencyController } from './latency/latency-controller'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from './loader/http-flv-loader'
+import { Fmp4AppendBatcher } from './mse/fmp4-append-batcher'
 import { MseController } from './mse/mse-controller'
 import { MseUnsupportedMimeError } from './mse/mime'
 import { loadWasmTransmuxCoreHost } from './wasm/wasm-loader'
@@ -68,6 +69,9 @@ export class RuntimeWorker {
   private outputBytes = 0
   private appendQueueMaxLength = 0
   private appendQueueMaxBytes = 0
+  private fmp4AppendBatcher?: Fmp4AppendBatcher
+  private fmp4AppendGeneration = 0
+  private fmp4AppendTail: Promise<boolean> = Promise.resolve(true)
 
   constructor(port: RuntimeWorkerPort, dependencies: RuntimeWorkerDependencies = {}) {
     this.port = port
@@ -180,6 +184,7 @@ export class RuntimeWorker {
 
     this.transmuxCore?.destroy()
     this.transmuxCore = transmuxCore
+    this.startFmp4AppendBatcher()
     this.state = 'started'
     this.outputBytes = 0
     this.appendQueueMaxLength = 0
@@ -251,6 +256,13 @@ export class RuntimeWorker {
         await this.applyLatencyPolicy()
         this.postStats(loader.stats)
       }
+
+      if (this.isCurrentLoader(loader, runId)) {
+        if (!(await this.flushFmp4AppendBatches())) {
+          return
+        }
+        this.postStats(loader.stats)
+      }
     } catch (cause) {
       if (!this.isCurrentLoader(loader, runId) || isAbortLikeError(cause)) {
         return
@@ -268,6 +280,7 @@ export class RuntimeWorker {
 
   private async closeLoader(): Promise<void> {
     this.stopStatsTimer()
+    this.discardFmp4AppendBatches()
     const loader = this.loader
     if (loader === undefined) {
       return
@@ -286,6 +299,7 @@ export class RuntimeWorker {
     }
 
     this.stopStatsTimer()
+    this.discardFmp4AppendBatches()
     this.loader = undefined
     this.loaderRunId += 1
     this.transmuxCore?.destroy()
@@ -341,6 +355,9 @@ export class RuntimeWorker {
           this.failWithError(coreErrorToPlayerError(event.data))
           return false
         case 'initSegment':
+          if (!(await this.flushFmp4AppendBatches(event.data.track))) {
+            return false
+          }
           if (!(await this.appendToMse(() => this.mse?.appendInitSegment(event.data)))) {
             return false
           }
@@ -348,11 +365,12 @@ export class RuntimeWorker {
           await this.applyLatencyPolicy()
           break
         case 'mediaSegment':
-          if (!(await this.appendToMse(() => this.mse?.appendMediaSegment(event.data)))) {
-            return false
+          {
+            const batch = this.fmp4AppendBatcher?.push(event.data)
+            if (batch !== undefined && !(await this.enqueueFmp4AppendBatch(batch))) {
+              return false
+            }
           }
-          this.outputBytes += event.data.bytes.byteLength
-          await this.applyLatencyPolicy()
           break
         case 'probeResult':
         case 'trackConfig':
@@ -364,6 +382,61 @@ export class RuntimeWorker {
     }
 
     return true
+  }
+
+  private startFmp4AppendBatcher(): void {
+    this.discardFmp4AppendBatches()
+    this.fmp4AppendTail = Promise.resolve(true)
+    this.fmp4AppendBatcher = new Fmp4AppendBatcher((track) => {
+      const batch = this.fmp4AppendBatcher?.flush(track)
+      if (batch !== undefined) {
+        void this.enqueueFmp4AppendBatch(batch)
+      }
+    })
+  }
+
+  private async flushFmp4AppendBatches(track?: Extract<CoreEvent, { type: 'mediaSegment' }>['data']['track']): Promise<boolean> {
+    const batcher = this.fmp4AppendBatcher
+    if (batcher === undefined) {
+      return true
+    }
+
+    const batches = track === undefined ? batcher.flushAll() : [batcher.flush(track)].filter((batch): batch is NonNullable<typeof batch> => batch !== undefined)
+    for (const batch of batches) {
+      if (!(await this.enqueueFmp4AppendBatch(batch))) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private enqueueFmp4AppendBatch(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<boolean> {
+    const generation = this.fmp4AppendGeneration
+    const append = this.fmp4AppendTail.then(async (previousAppendSucceeded) => {
+      if (!previousAppendSucceeded || generation !== this.fmp4AppendGeneration || this.state !== 'started') {
+        return false
+      }
+
+      if (!(await this.appendToMse(() => this.mse?.appendMediaSegment(segment)))) {
+        return false
+      }
+
+      this.outputBytes += segment.bytes.byteLength
+      await this.applyLatencyPolicy()
+      return true
+    })
+    this.fmp4AppendTail = append.catch((cause) => {
+      this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+      return false
+    })
+    return this.fmp4AppendTail
+  }
+
+  private discardFmp4AppendBatches(): void {
+    this.fmp4AppendGeneration += 1
+    this.fmp4AppendBatcher?.discard()
+    this.fmp4AppendBatcher = undefined
+    this.fmp4AppendTail = Promise.resolve(true)
   }
 
   private collectMseStats(): {
@@ -527,6 +600,7 @@ export class RuntimeWorker {
     }
 
     this.state = 'fatal-error'
+    this.discardFmp4AppendBatches()
     void this.closeLoader()
     this.mse?.destroy()
     this.mse = undefined

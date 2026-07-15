@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { HttpFlvLoaderError } from '../src/loader/http-flv-loader'
 import { MseUnsupportedMimeError } from '../src/mse/mime'
@@ -69,6 +69,7 @@ describe('RuntimeWorker', () => {
     const initBytes = new Uint8Array([1, 2, 3])
     const firstMediaBytes = new Uint8Array([4, 5])
     const secondMediaBytes = new Uint8Array([6])
+    const mse = new MockMseController()
     const transmuxCore = new MockTransmuxCore([
       [
         { type: 'mediaInfo', data: { container: 'flv', video: 'avc', videoCodec: 'avc1.42E01E' } },
@@ -78,7 +79,7 @@ describe('RuntimeWorker', () => {
       [{ type: 'mediaSegment', data: { track: 'video', dtsStartMs: 40, dtsEndMs: 80, keyframe: false, bytes: secondMediaBytes } }],
     ])
     const runtime = createRuntime(port, {
-      createMseController: () => new MockMseController(),
+      createMseController: () => mse,
       createLoader: () => loader,
       createTransmuxCore: () => transmuxCore,
     })
@@ -111,7 +112,7 @@ describe('RuntimeWorker', () => {
       stats: expect.objectContaining({
         bytesReceived: 2,
         currentNetworkSpeed: 2,
-        outputBytes: 5,
+        outputBytes: 3,
       }),
     })
     expect(statsMessages).toContainEqual({
@@ -122,6 +123,46 @@ describe('RuntimeWorker', () => {
         outputBytes: 6,
       }),
     })
+    expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 80, keyframe: true, bytes: new Uint8Array([4, 5, 6]) }])
+  })
+
+  it('flushes a pending fMP4 media batch to MSE after 125 ms', async () => {
+    vi.useFakeTimers()
+    try {
+      const port = new MockPort()
+      const loader = new BlockingLoader()
+      const mse = new MockMseController()
+      const transmuxCore = new MockTransmuxCore([
+        [
+          { type: 'initSegment', data: { track: 'audio', codec: 'opus', timescale: 48_000, bytes: new Uint8Array([1]) } },
+          { type: 'mediaSegment', data: { track: 'audio', dtsStartMs: 0, dtsEndMs: 20, keyframe: true, bytes: new Uint8Array([2, 3]) } },
+        ],
+      ])
+      const runtime = createRuntime(port, {
+        createMseController: () => mse,
+        createLoader: () => loader,
+        createTransmuxCore: () => transmuxCore,
+      })
+
+      await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+      await runtime.handleCommand({ type: 'attach-media-source' })
+      await runtime.handleCommand({ type: 'start' })
+      await loader.waitForOpen()
+      await loader.waitForRead()
+      loader.push(new Uint8Array([1]))
+      await flushMicrotasks()
+
+      expect(mse.initSegments).toHaveLength(1)
+      expect(mse.mediaSegments).toStrictEqual([])
+
+      await vi.advanceTimersByTimeAsync(125)
+      await flushMicrotasks()
+
+      expect(mse.mediaSegments).toStrictEqual([{ track: 'audio', dtsStartMs: 0, dtsEndMs: 20, keyframe: true, bytes: new Uint8Array([2, 3]) }])
+      await runtime.handleCommand({ type: 'stop' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports unavailable transmux core as a terminal structured runtime error', async () => {
@@ -736,8 +777,12 @@ class BlockingLoader implements StreamLoader {
   resumeCount = 0
   private resolveOpen?: () => void
   private resolveRead?: (value: StreamChunk | null) => void
+  private resolveReadStarted?: () => void
   private readonly opened = new Promise<void>((resolve) => {
     this.resolveOpen = resolve
+  })
+  private readonly readStarted = new Promise<void>((resolve) => {
+    this.resolveReadStarted = resolve
   })
 
   constructor(stats: StreamLoaderStats = { bytesReceived: 0, currentNetworkSpeed: 0 }) {
@@ -750,9 +795,19 @@ class BlockingLoader implements StreamLoader {
   }
 
   read(): Promise<StreamChunk | null> {
+    this.resolveReadStarted?.()
+    this.resolveReadStarted = undefined
     return new Promise((resolve) => {
       this.resolveRead = resolve
     })
+  }
+
+  push(bytes: Uint8Array): void {
+    this.stats.bytesReceived += bytes.byteLength
+    this.stats.currentNetworkSpeed = bytes.byteLength
+    const resolveRead = this.resolveRead
+    this.resolveRead = undefined
+    resolveRead?.({ bytes, receivedAtMs: this.stats.bytesReceived })
   }
 
   pause(): void {
@@ -774,6 +829,10 @@ class BlockingLoader implements StreamLoader {
 
   waitForOpen(): Promise<void> {
     return this.opened
+  }
+
+  waitForRead(): Promise<void> {
+    return this.readStarted
   }
 }
 
@@ -849,6 +908,12 @@ function createRuntime(port: MockPort, dependencies: RuntimeWorkerDependencies =
     detectRuntime: () => undefined,
     ...dependencies,
   })
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve()
+  }
 }
 
 function createQuotaExceededError(): Error {
