@@ -190,14 +190,23 @@ impl HevcNormalizer {
         if vps.is_empty() && sps.is_empty() && pps.is_empty() {
             return Ok(());
         }
-        if !vps.is_empty() {
+
+        let mut parameter_sets_changed = false;
+        if !vps.is_empty() && self.vps != vps {
             self.vps = vps;
+            parameter_sets_changed = true;
         }
-        if !sps.is_empty() {
+        if !sps.is_empty() && self.sps != sps {
             self.sps = sps;
+            parameter_sets_changed = true;
         }
-        if !pps.is_empty() {
+        if !pps.is_empty() && self.pps != pps {
             self.pps = pps;
+            parameter_sets_changed = true;
+        }
+
+        if !parameter_sets_changed {
+            return Ok(());
         }
 
         if self.vps.is_empty() || self.sps.is_empty() || self.pps.is_empty() {
@@ -969,6 +978,47 @@ mod tests {
                 data,
                 ..
             })] if *data == [0, 0, 0, 3, 0x2A, 0x01, 0x80]
+        ));
+    }
+
+    #[test]
+    fn does_not_reconfigure_for_parameter_sets_already_in_hvcc() {
+        let vps = minimal_vps();
+        let sps = minimal_sps(640, 360);
+        let pps = minimal_pps();
+        let mut hvcc = HevcConfig::from_parameter_sets(&[&vps], &[&sps], &[&pps])
+            .unwrap()
+            .hvcc;
+        // This valid hvcC field is not reconstructed from parameter sets. It models
+        // encoder-produced hvcC whose non-parameter-set fields differ from our canonical form.
+        hvcc[13] = 0xF1;
+
+        let mut normalizer = HevcNormalizer::default();
+        let mut events = Vec::new();
+        normalizer.on_configuration(&hvcc, &mut events).unwrap();
+
+        events.clear();
+        let mut sample = Vec::new();
+        for nalu in [&vps[..], &sps[..], &pps[..], &[0x26, 0x01, 0x80]] {
+            sample.extend_from_slice(&(nalu.len() as u32).to_be_bytes());
+            sample.extend_from_slice(nalu);
+        }
+        normalizer
+            .push_access_unit(
+                VideoAccessUnit {
+                    track_id: TrackId::VIDEO,
+                    timing: SampleTiming { dts: 0, pts: 0 },
+                    is_sync: true,
+                    data: VideoSampleData::LengthPrefixedNalus(&sample),
+                },
+                &mut events,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Sample(EncodedSample::Video { data, .. })]
+                if *data == [0, 0, 0, 3, 0x26, 0x01, 0x80]
         ));
     }
 

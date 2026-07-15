@@ -42,6 +42,20 @@ pub fn video_sample_tag(
     raw_tag(9, timestamp_ms, &payload)
 }
 
+pub fn enhanced_video_tag(
+    timestamp_ms: u32,
+    is_keyframe: bool,
+    packet_type: u8,
+    fourcc: &[u8; 4],
+    body: &[u8],
+) -> Vec<u8> {
+    let frame_type = if is_keyframe { 0x10 } else { 0x20 };
+    let mut payload = vec![0x80 | frame_type | packet_type];
+    payload.extend_from_slice(fourcc);
+    payload.extend_from_slice(body);
+    raw_tag(9, timestamp_ms, &payload)
+}
+
 pub fn audio_sequence_header_tag(asc: &[u8]) -> Vec<u8> {
     let mut payload = vec![0xAF, 0];
     payload.extend_from_slice(asc);
@@ -91,6 +105,14 @@ pub fn baseline_320x240_avcc() -> Vec<u8> {
     ]
 }
 
+pub fn minimal_hvcc() -> Vec<u8> {
+    vec![
+        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 120, 0xF0, 0, 0xFC, 0xFD, 0xF8, 0xF8, 0, 0, 0x0F, 3,
+        0xA0, 0, 1, 0, 3, 0x40, 1, 0x0C, 0xA1, 0, 1, 0, 3, 0x42, 1, 0x80, 0xA2, 0, 1, 0, 3, 0x44,
+        1, 0xC0,
+    ]
+}
+
 pub fn read_box_type(bytes: &[u8], offset: usize) -> String {
     String::from_utf8(bytes[offset + 4..offset + 8].to_vec()).unwrap()
 }
@@ -125,7 +147,7 @@ fn find_box_from(bytes: &[u8], name: &[u8; 4], start: usize) -> Option<usize> {
             return Some(offset + 8 + child_offset);
         }
 
-        if &bytes[offset + 4..offset + 8] == b"avc1"
+        if matches!(&bytes[offset + 4..offset + 8], b"avc1" | b"hvc1" | b"av01")
             && let Some(child_offset) = find_box_from(&bytes[offset + 8..offset + size], name, 78)
         {
             return Some(offset + 8 + child_offset);

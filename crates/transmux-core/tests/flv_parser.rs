@@ -5,8 +5,9 @@ use rivmux_transmux_core::{
     EncodedSample, TrackConfig, TransmuxCore, VideoCodecConfig, VideoCodecKind,
 };
 use support::{
-    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, flv_header, minimal_avcc,
-    raw_tag, raw_tag_with_previous_size, video_sample_tag, video_sequence_header_tag,
+    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, enhanced_video_tag, find_box,
+    flv_header, minimal_avcc, minimal_hvcc, raw_tag, raw_tag_with_previous_size, video_sample_tag,
+    video_sequence_header_tag,
 };
 
 #[test]
@@ -120,6 +121,201 @@ fn rejects_unsupported_audio_codec_with_structured_error() {
     let error = core.push_chunk(&input).unwrap_err();
 
     assert_eq!(error.code, CoreErrorCode::UnsupportedAudioCodec);
+}
+
+#[test]
+fn parses_enhanced_flv_hevc_with_composition_time() {
+    let mut coded_frame = vec![0, 0, 2];
+    coded_frame.extend_from_slice(&[0, 0, 0, 3, 0x26, 0x01, 0x80]);
+    let input = build_flv(vec![
+        enhanced_video_tag(100, true, 0, b"hvc1", &minimal_hvcc()),
+        enhanced_video_tag(100, true, 1, b"hvc1", &coded_frame),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::TrackConfig(TrackConfig::Video(track))
+                if matches!(
+                    &track.codec,
+                    VideoCodecConfig::Hevc(config) if config.codec_string == "hvc1.1.0.L120"
+                )
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video {
+                timing,
+                is_sync: true,
+                data,
+                ..
+            }) if timing.dts == 0
+                && timing.pts == 2
+                && *data == [0, 0, 0, 3, 0x26, 0x01, 0x80]
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::InitSegment(segment)
+                if segment.codec == "hvc1.1.0.L120"
+                    && find_box(&segment.bytes, b"hvc1").is_some()
+                    && find_box(&segment.bytes, b"hvcC").is_some()
+        )
+    }));
+}
+
+#[test]
+fn parses_enhanced_flv_avc_with_composition_time() {
+    let mut coded_frame = vec![0, 0, 2];
+    coded_frame.extend_from_slice(&[0, 0, 0, 1, 0x65]);
+    let input = build_flv(vec![
+        enhanced_video_tag(100, true, 0, b"avc1", &minimal_avcc()),
+        enhanced_video_tag(100, true, 1, b"avc1", &coded_frame),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::TrackConfig(TrackConfig::Video(track))
+                if matches!(
+                    &track.codec,
+                    VideoCodecConfig::Avc(config) if config.codec_string == "avc1.42E01E"
+                )
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video { timing, .. })
+                if timing.dts == 0 && timing.pts == 2
+        )
+    }));
+}
+
+#[test]
+fn parses_enhanced_flv_coded_frames_x_without_composition_time() {
+    let input = build_flv(vec![
+        enhanced_video_tag(100, true, 0, b"hvc1", &minimal_hvcc()),
+        enhanced_video_tag(100, true, 3, b"hvc1", &[0, 0, 0, 3, 0x26, 0x01, 0x80]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video { timing, .. })
+                if timing.dts == 0 && timing.pts == 0
+        )
+    }));
+}
+
+#[test]
+fn parses_enhanced_flv_av1_temporal_unit() {
+    let input = build_flv(vec![
+        enhanced_video_tag(100, true, 0, b"av01", &[0x81, 0x08, 0, 0]),
+        enhanced_video_tag(100, true, 1, b"av01", &[0x12, 0]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::TrackConfig(TrackConfig::Video(track))
+                if matches!(
+                    &track.codec,
+                    VideoCodecConfig::Av1(config) if config.codec_string == "av01.0.08M.08"
+                )
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video {
+                timing,
+                is_sync: true,
+                data,
+                ..
+            }) if timing.dts == 0 && timing.pts == 0 && *data == [0x12, 0]
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::InitSegment(segment)
+                if segment.codec == "av01.0.08M.08"
+                    && find_box(&segment.bytes, b"av01").is_some()
+                    && find_box(&segment.bytes, b"av1C").is_some()
+        )
+    }));
+}
+
+#[test]
+fn skips_empty_enhanced_flv_av1_sequence_start_before_configuration() {
+    let av1c_with_config_obus = [
+        0x81, 0x00, 0x0C, 0x00, 0x0A, 0x0A, 0x00, 0x00, 0x00, 0x02, 0xAF, 0xFF, 0x9B, 0x5F, 0x20,
+        0x08,
+    ];
+    let input = build_flv(vec![
+        enhanced_video_tag(0, true, 0, b"av01", &[]),
+        enhanced_video_tag(0, true, 0, b"av01", &av1c_with_config_obus),
+        enhanced_video_tag(0, true, 1, b"av01", &[0x12, 0]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Warning(warning)
+                if warning.code == "RIVMUX_FLV_ENHANCED_AV1_EMPTY_SEQUENCE_START_SKIPPED"
+        )
+    }));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, CoreEvent::TrackConfig(TrackConfig::Video(_))))
+            .count(),
+        1
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Video {
+                timing,
+                is_sync: true,
+                data,
+                ..
+            }) if timing.dts == 0 && timing.pts == 0 && *data == [0x12, 0]
+        )
+    }));
+}
+
+#[test]
+fn rejects_unknown_enhanced_flv_video_fourcc() {
+    let input = build_flv(vec![enhanced_video_tag(0, true, 0, b"vp09", &[])]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    let error = core.push_chunk(&input).unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::UnsupportedVideoCodec);
 }
 
 #[test]

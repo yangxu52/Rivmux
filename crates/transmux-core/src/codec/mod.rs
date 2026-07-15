@@ -1,20 +1,6 @@
 pub(crate) mod aac;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Enhanced FLV demuxing will construct AV1 normalization inputs in the next container phase."
-    )
-)]
 pub(crate) mod av1;
 pub(crate) mod avc;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "MPEG-TS demuxing will construct HEVC normalization inputs in the next container phase."
-    )
-)]
 pub(crate) mod hevc;
 pub(crate) mod normalizer;
 

@@ -22,13 +22,6 @@ pub(crate) enum VideoSampleData<'a> {
         )
     )]
     AnnexB(&'a [u8]),
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Enhanced FLV and MPEG-TS demuxing will construct AV1 OBU temporal units in later container phases."
-        )
-    )]
     ObuTemporalUnit(&'a [u8]),
 }
 

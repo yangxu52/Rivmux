@@ -1,5 +1,7 @@
 use crate::codec::aac::AacNormalizer;
+use crate::codec::av1::Av1Normalizer;
 use crate::codec::avc::AvcNormalizer;
+use crate::codec::hevc::HevcNormalizer;
 use crate::codec::normalizer::{
     AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData, VideoAccessUnit,
     VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
@@ -22,9 +24,22 @@ const TAG_TYPE_SCRIPT: u8 = 18;
 const VIDEO_CODEC_ID_AVC: u8 = 7;
 const SOUND_FORMAT_AAC: u8 = 10;
 
+const VIDEO_EX_HEADER_FLAG: u8 = 0x80;
+const VIDEO_ENHANCED_FRAME_TYPE_MASK: u8 = 0x70;
+const VIDEO_PACKET_TYPE_MASK: u8 = 0x0F;
+
 const AVC_PACKET_TYPE_SEQUENCE_HEADER: u8 = 0;
 const AVC_PACKET_TYPE_NALU: u8 = 1;
 const AVC_PACKET_TYPE_END_OF_SEQUENCE: u8 = 2;
+
+const VIDEO_PACKET_TYPE_SEQUENCE_START: u8 = 0;
+const VIDEO_PACKET_TYPE_CODED_FRAMES: u8 = 1;
+const VIDEO_PACKET_TYPE_SEQUENCE_END: u8 = 2;
+const VIDEO_PACKET_TYPE_CODED_FRAMES_X: u8 = 3;
+const VIDEO_PACKET_TYPE_METADATA: u8 = 4;
+const VIDEO_PACKET_TYPE_MPEG2TS_SEQUENCE_START: u8 = 5;
+const VIDEO_PACKET_TYPE_MULTITRACK: u8 = 6;
+const VIDEO_PACKET_TYPE_MOD_EX: u8 = 7;
 
 const AAC_PACKET_TYPE_SEQUENCE_HEADER: u8 = 0;
 const AAC_PACKET_TYPE_RAW: u8 = 1;
@@ -47,13 +62,91 @@ struct FlvTagHeader {
     timestamp_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlvVideoCodec {
+    Avc,
+    Hevc,
+    Av1,
+}
+
+impl FlvVideoCodec {
+    fn from_fourcc(fourcc: &[u8]) -> Result<Self, CoreError> {
+        match fourcc {
+            b"avc1" => Ok(Self::Avc),
+            b"hvc1" => Ok(Self::Hevc),
+            b"av01" => Ok(Self::Av1),
+            _ => Err(CoreError::new(
+                CoreErrorCode::UnsupportedVideoCodec,
+                format!("Unsupported Enhanced FLV video FourCC {fourcc:?}."),
+            )),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum FlvVideoNormalizer {
+    Avc(AvcNormalizer),
+    Hevc(HevcNormalizer),
+    Av1(Av1Normalizer),
+}
+
+impl FlvVideoNormalizer {
+    fn new(codec: FlvVideoCodec) -> Self {
+        match codec {
+            FlvVideoCodec::Avc => Self::Avc(AvcNormalizer::default()),
+            FlvVideoCodec::Hevc => Self::Hevc(HevcNormalizer::default()),
+            FlvVideoCodec::Av1 => Self::Av1(Av1Normalizer::default()),
+        }
+    }
+
+    fn codec(&self) -> FlvVideoCodec {
+        match self {
+            Self::Avc(_) => FlvVideoCodec::Avc,
+            Self::Hevc(_) => FlvVideoCodec::Hevc,
+            Self::Av1(_) => FlvVideoCodec::Av1,
+        }
+    }
+
+    fn on_configuration(
+        &mut self,
+        data: &[u8],
+        out: &mut Vec<VideoNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        match self {
+            Self::Avc(normalizer) => normalizer.on_configuration(data, out),
+            Self::Hevc(normalizer) => normalizer.on_configuration(data, out),
+            Self::Av1(normalizer) => normalizer.on_configuration(data, out),
+        }
+    }
+
+    fn push_access_unit(
+        &mut self,
+        unit: VideoAccessUnit<'_>,
+        out: &mut Vec<VideoNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        match self {
+            Self::Avc(normalizer) => normalizer.push_access_unit(unit, out),
+            Self::Hevc(normalizer) => normalizer.push_access_unit(unit, out),
+            Self::Av1(normalizer) => normalizer.push_access_unit(unit, out),
+        }
+    }
+
+    fn flush(&mut self, out: &mut Vec<VideoNormalizerEvent>) -> Result<(), CoreError> {
+        match self {
+            Self::Avc(normalizer) => normalizer.flush(out),
+            Self::Hevc(normalizer) => normalizer.flush(out),
+            Self::Av1(normalizer) => normalizer.flush(out),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FlvDemuxer {
     max_tag_data_size: usize,
     buffer: Vec<u8>,
     state: FlvParseState,
     media_info: MediaInfo,
-    avc_normalizer: AvcNormalizer,
+    video_normalizer: Option<FlvVideoNormalizer>,
     aac_normalizer: AacNormalizer,
 }
 
@@ -71,7 +164,7 @@ impl FlvDemuxer {
             buffer: Vec::new(),
             state: FlvParseState::Header,
             media_info: MediaInfo::flv(),
-            avc_normalizer: AvcNormalizer::default(),
+            video_normalizer: None,
             aac_normalizer: AacNormalizer::default(),
         }
     }
@@ -89,9 +182,11 @@ impl FlvDemuxer {
             ));
         }
 
-        let mut video_events = Vec::new();
-        self.avc_normalizer.flush(&mut video_events)?;
-        self.process_video_normalizer_events(video_events, out)?;
+        if let Some(normalizer) = &mut self.video_normalizer {
+            let mut video_events = Vec::new();
+            normalizer.flush(&mut video_events)?;
+            self.process_video_normalizer_events(video_events, out)?;
+        }
         let mut audio_events = Vec::new();
         self.aac_normalizer.flush(&mut audio_events)?;
         self.process_audio_normalizer_events(audio_events, out)
@@ -295,6 +390,19 @@ impl FlvDemuxer {
             ));
         }
 
+        if payload[0] & VIDEO_EX_HEADER_FLAG != 0 {
+            return self.process_enhanced_video_tag(header, payload, out);
+        }
+
+        self.process_legacy_video_tag(header, payload, out)
+    }
+
+    fn process_legacy_video_tag(
+        &mut self,
+        header: FlvTagHeader,
+        payload: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
         let frame_type = payload[0] >> 4;
         let codec_id = payload[0] & 0b0000_1111;
         if codec_id != VIDEO_CODEC_ID_AVC {
@@ -318,33 +426,198 @@ impl FlvDemuxer {
 
         match avc_packet_type {
             AVC_PACKET_TYPE_SEQUENCE_HEADER => {
-                let mut codec_events = Vec::new();
-                self.avc_normalizer
-                    .on_configuration(&payload[5..], &mut codec_events)?;
-                self.process_video_normalizer_events(codec_events, out)
+                self.push_video_configuration(FlvVideoCodec::Avc, &payload[5..], out)
             }
-            AVC_PACKET_TYPE_NALU => {
-                let mut codec_events = Vec::new();
-                self.avc_normalizer.push_access_unit(
-                    VideoAccessUnit {
-                        track_id: TrackId::VIDEO,
-                        timing: SampleTiming {
-                            dts: dts_ms,
-                            pts: pts_ms,
-                        },
-                        is_sync: frame_type == 1,
-                        data: VideoSampleData::LengthPrefixedNalus(&payload[5..]),
+            AVC_PACKET_TYPE_NALU => self.push_video_access_unit(
+                FlvVideoCodec::Avc,
+                VideoAccessUnit {
+                    track_id: TrackId::VIDEO,
+                    timing: SampleTiming {
+                        dts: dts_ms,
+                        pts: pts_ms,
                     },
-                    &mut codec_events,
-                )?;
-                self.process_video_normalizer_events(codec_events, out)
-            }
+                    is_sync: frame_type == 1,
+                    data: VideoSampleData::LengthPrefixedNalus(&payload[5..]),
+                },
+                out,
+            ),
             AVC_PACKET_TYPE_END_OF_SEQUENCE => Ok(()),
             other => Err(CoreError::new(
                 CoreErrorCode::InvalidCodecConfig,
                 format!("Unsupported AVC packet type {other}."),
             )),
         }
+    }
+
+    fn process_enhanced_video_tag(
+        &mut self,
+        header: FlvTagHeader,
+        payload: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        if payload.len() < 5 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "Enhanced FLV video tag is too short for a FourCC.",
+            ));
+        }
+
+        let packet_type = payload[0] & VIDEO_PACKET_TYPE_MASK;
+        let codec = FlvVideoCodec::from_fourcc(&payload[1..5])?;
+        let frame_type = (payload[0] & VIDEO_ENHANCED_FRAME_TYPE_MASK) >> 4;
+        let dts_ms = header.timestamp_ms;
+
+        match packet_type {
+            VIDEO_PACKET_TYPE_SEQUENCE_START => {
+                let configuration = &payload[5..];
+                if codec == FlvVideoCodec::Av1 && configuration.is_empty() {
+                    // FFmpeg may emit an empty AV1 sequence-start tag before the encoder
+                    // has produced its av1C extradata. Do not initialize the codec until the
+                    // following non-empty configuration arrives.
+                    out.push(CoreEvent::Warning(CoreWarning::new(
+                        "RIVMUX_FLV_ENHANCED_AV1_EMPTY_SEQUENCE_START_SKIPPED",
+                        "Skipping an empty Enhanced FLV AV1 sequence-start tag.",
+                    )));
+                    Ok(())
+                } else {
+                    self.push_video_configuration(codec, configuration, out)
+                }
+            }
+            VIDEO_PACKET_TYPE_CODED_FRAMES => {
+                let (pts_ms, data) = match codec {
+                    FlvVideoCodec::Avc | FlvVideoCodec::Hevc => {
+                        if payload.len() < 8 {
+                            return Err(CoreError::new(
+                                CoreErrorCode::InvalidContainerData,
+                                "Enhanced FLV AVC/HEVC coded frame is missing a composition time offset.",
+                            ));
+                        }
+                        (dts_ms + i64::from(read_i24(&payload[5..8])), &payload[8..])
+                    }
+                    FlvVideoCodec::Av1 => (dts_ms, &payload[5..]),
+                };
+                self.push_enhanced_video_sample(codec, frame_type, dts_ms, pts_ms, data, out)
+            }
+            VIDEO_PACKET_TYPE_CODED_FRAMES_X => {
+                if codec == FlvVideoCodec::Av1 {
+                    return Err(CoreError::new(
+                        CoreErrorCode::InvalidCodecConfig,
+                        "Enhanced FLV AV1 does not support CodedFramesX.",
+                    ));
+                }
+                self.push_enhanced_video_sample(
+                    codec,
+                    frame_type,
+                    dts_ms,
+                    dts_ms,
+                    &payload[5..],
+                    out,
+                )
+            }
+            VIDEO_PACKET_TYPE_SEQUENCE_END => Ok(()),
+            VIDEO_PACKET_TYPE_METADATA => {
+                out.push(CoreEvent::Warning(CoreWarning::new(
+                    "RIVMUX_FLV_ENHANCED_VIDEO_METADATA_SKIPPED",
+                    "Enhanced FLV video metadata is not mapped to fMP4 output.",
+                )));
+                Ok(())
+            }
+            VIDEO_PACKET_TYPE_MPEG2TS_SEQUENCE_START => Err(CoreError::new(
+                CoreErrorCode::UnsupportedVideoCodec,
+                "Enhanced FLV MPEG-2 TS sequence start is not supported.",
+            )),
+            VIDEO_PACKET_TYPE_MULTITRACK => Err(CoreError::new(
+                CoreErrorCode::UnsupportedVideoCodec,
+                "Enhanced FLV multitrack video is not supported.",
+            )),
+            VIDEO_PACKET_TYPE_MOD_EX => Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "Enhanced FLV VideoPacketType.ModEx is not supported.",
+            )),
+            other => Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                format!("Unsupported Enhanced FLV video packet type {other}."),
+            )),
+        }
+    }
+
+    fn push_enhanced_video_sample(
+        &mut self,
+        codec: FlvVideoCodec,
+        frame_type: u8,
+        dts_ms: i64,
+        pts_ms: i64,
+        data: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        let is_sync = match frame_type {
+            1 | 4 => true,
+            2 => false,
+            other => {
+                return Err(CoreError::new(
+                    CoreErrorCode::InvalidContainerData,
+                    format!("Unsupported Enhanced FLV coded-frame type {other}."),
+                ));
+            }
+        };
+        let data = match codec {
+            FlvVideoCodec::Avc | FlvVideoCodec::Hevc => VideoSampleData::LengthPrefixedNalus(data),
+            FlvVideoCodec::Av1 => VideoSampleData::ObuTemporalUnit(data),
+        };
+        self.push_video_access_unit(
+            codec,
+            VideoAccessUnit {
+                track_id: TrackId::VIDEO,
+                timing: SampleTiming {
+                    dts: dts_ms,
+                    pts: pts_ms,
+                },
+                is_sync,
+                data,
+            },
+            out,
+        )
+    }
+
+    fn push_video_configuration(
+        &mut self,
+        codec: FlvVideoCodec,
+        data: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        let mut codec_events = Vec::new();
+        self.video_normalizer_mut(codec)?
+            .on_configuration(data, &mut codec_events)?;
+        self.process_video_normalizer_events(codec_events, out)
+    }
+
+    fn push_video_access_unit(
+        &mut self,
+        codec: FlvVideoCodec,
+        unit: VideoAccessUnit<'_>,
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        let mut codec_events = Vec::new();
+        self.video_normalizer_mut(codec)?
+            .push_access_unit(unit, &mut codec_events)?;
+        self.process_video_normalizer_events(codec_events, out)
+    }
+
+    fn video_normalizer_mut(
+        &mut self,
+        codec: FlvVideoCodec,
+    ) -> Result<&mut FlvVideoNormalizer, CoreError> {
+        if let Some(normalizer) = &self.video_normalizer
+            && normalizer.codec() != codec
+        {
+            return Err(CoreError::new(
+                CoreErrorCode::UnsupportedVideoCodec,
+                "FLV stream changes video codec after video initialization.",
+            ));
+        }
+        Ok(self
+            .video_normalizer
+            .get_or_insert_with(|| FlvVideoNormalizer::new(codec)))
     }
 
     fn process_video_normalizer_events(
