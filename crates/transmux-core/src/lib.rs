@@ -18,6 +18,7 @@ pub use crate::codec::aac::AacConfig;
 pub use crate::codec::av1::Av1Config;
 pub use crate::codec::avc::AvcConfig;
 pub use crate::codec::hevc::HevcConfig;
+pub use crate::codec::opus::OpusConfig;
 pub use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 pub use crate::error::{CoreError, CoreErrorCode};
 pub use crate::event::{

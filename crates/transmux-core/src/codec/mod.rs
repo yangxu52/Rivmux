@@ -3,11 +3,13 @@ pub(crate) mod av1;
 pub(crate) mod avc;
 pub(crate) mod hevc;
 pub(crate) mod normalizer;
+pub(crate) mod opus;
 
 use crate::codec::aac::AacConfig;
 use crate::codec::av1::Av1Config;
 use crate::codec::avc::AvcConfig;
 use crate::codec::hevc::HevcConfig;
+use crate::codec::opus::OpusConfig;
 use crate::probe::{AudioCodecKind, VideoCodecKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,7 @@ impl VideoCodecConfig {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum AudioCodecConfig {
     Aac(AacConfig),
+    Opus(OpusConfig),
 }
 
 impl AudioCodecConfig {
@@ -62,6 +65,7 @@ impl AudioCodecConfig {
     pub fn kind(&self) -> AudioCodecKind {
         match self {
             Self::Aac(_) => AudioCodecKind::Aac,
+            Self::Opus(_) => AudioCodecKind::Opus,
         }
     }
 
@@ -69,6 +73,7 @@ impl AudioCodecConfig {
     pub fn codec_string(&self) -> &str {
         match self {
             Self::Aac(config) => &config.codec_string,
+            Self::Opus(config) => &config.codec_string,
         }
     }
 
@@ -76,6 +81,7 @@ impl AudioCodecConfig {
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Aac(config) => config.sample_rate,
+            Self::Opus(_) => opus::OPUS_SAMPLE_RATE,
         }
     }
 
@@ -83,6 +89,7 @@ impl AudioCodecConfig {
     pub fn channel_count(&self) -> u8 {
         match self {
             Self::Aac(config) => config.channel_count,
+            Self::Opus(config) => config.channel_count,
         }
     }
 }

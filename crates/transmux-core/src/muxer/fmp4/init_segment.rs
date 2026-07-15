@@ -2,6 +2,7 @@ use crate::codec::aac::AacConfig;
 use crate::codec::av1::Av1Config;
 use crate::codec::avc::AvcConfig;
 use crate::codec::hevc::HevcConfig;
+use crate::codec::opus::{OPUS_SAMPLE_RATE, OpusConfig};
 use crate::codec::{AudioCodecConfig, VideoCodecConfig};
 use crate::muxer::fmp4::boxes::{
     concat_box, write_box, write_fixed_16_16, write_full_box, write_u16, write_u32,
@@ -57,12 +58,14 @@ impl Fmp4AudioCodec for AudioCodecConfig {
     fn compatible_brand(&self) -> &[u8; 4] {
         match self {
             Self::Aac(_) => b"mp4a",
+            Self::Opus(_) => b"Opus",
         }
     }
 
     fn sample_entry(&self) -> Vec<u8> {
         match self {
             Self::Aac(config) => mp4a(config),
+            Self::Opus(config) => opus(config),
         }
     }
 }
@@ -384,6 +387,31 @@ fn mp4a(config: &AacConfig) -> Vec<u8> {
     write_u32(&mut payload, config.sample_rate.min(u16::MAX as u32) << 16);
     payload.extend_from_slice(&esds(config));
     write_box(b"mp4a", payload)
+}
+
+fn opus(config: &OpusConfig) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&[0; 6]);
+    write_u16(&mut payload, 1);
+    payload.extend_from_slice(&[0; 8]);
+    write_u16(&mut payload, config.channel_count as u16);
+    write_u16(&mut payload, AUDIO_SAMPLE_SIZE);
+    write_u16(&mut payload, 0);
+    write_u16(&mut payload, 0);
+    write_u32(&mut payload, OPUS_SAMPLE_RATE << 16);
+    payload.extend_from_slice(&dops(config));
+    write_box(b"Opus", payload)
+}
+
+fn dops(config: &OpusConfig) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.push(0);
+    payload.push(config.channel_count);
+    write_u16(&mut payload, config.pre_skip);
+    write_u32(&mut payload, config.input_sample_rate);
+    write_u16(&mut payload, config.output_gain as u16);
+    payload.push(0);
+    write_box(b"dOps", payload)
 }
 
 fn esds(config: &AacConfig) -> Vec<u8> {

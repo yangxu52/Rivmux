@@ -6,6 +6,7 @@ use crate::codec::normalizer::{
     AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData, VideoAccessUnit,
     VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
 };
+use crate::codec::opus::OpusNormalizer;
 use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, MediaInfo};
 use crate::metadata::MetadataEvent;
@@ -22,6 +23,7 @@ const TAG_TYPE_VIDEO: u8 = 9;
 const TAG_TYPE_SCRIPT: u8 = 18;
 
 const VIDEO_CODEC_ID_AVC: u8 = 7;
+const SOUND_FORMAT_EX_AUDIO: u8 = 9;
 const SOUND_FORMAT_AAC: u8 = 10;
 
 const VIDEO_EX_HEADER_FLAG: u8 = 0x80;
@@ -43,6 +45,13 @@ const VIDEO_PACKET_TYPE_MOD_EX: u8 = 7;
 
 const AAC_PACKET_TYPE_SEQUENCE_HEADER: u8 = 0;
 const AAC_PACKET_TYPE_RAW: u8 = 1;
+
+const AUDIO_PACKET_TYPE_SEQUENCE_START: u8 = 0;
+const AUDIO_PACKET_TYPE_CODED_FRAMES: u8 = 1;
+const AUDIO_PACKET_TYPE_SEQUENCE_END: u8 = 2;
+const AUDIO_PACKET_TYPE_MULTICHANNEL_CONFIG: u8 = 4;
+const AUDIO_PACKET_TYPE_MULTITRACK: u8 = 5;
+const AUDIO_PACKET_TYPE_MOD_EX: u8 = 7;
 
 const FLV_TIMESCALE: u32 = 1_000;
 
@@ -67,6 +76,24 @@ enum FlvVideoCodec {
     Avc,
     Hevc,
     Av1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlvAudioCodec {
+    Aac,
+    Opus,
+}
+
+impl FlvAudioCodec {
+    fn from_fourcc(fourcc: &[u8]) -> Result<Self, CoreError> {
+        match fourcc {
+            b"Opus" => Ok(Self::Opus),
+            _ => Err(CoreError::new(
+                CoreErrorCode::UnsupportedAudioCodec,
+                format!("Unsupported Enhanced FLV audio FourCC {fourcc:?}."),
+            )),
+        }
+    }
 }
 
 impl FlvVideoCodec {
@@ -141,13 +168,64 @@ impl FlvVideoNormalizer {
 }
 
 #[derive(Debug)]
+enum FlvAudioNormalizer {
+    Aac(AacNormalizer),
+    Opus(OpusNormalizer),
+}
+
+impl FlvAudioNormalizer {
+    fn new(codec: FlvAudioCodec) -> Self {
+        match codec {
+            FlvAudioCodec::Aac => Self::Aac(AacNormalizer::default()),
+            FlvAudioCodec::Opus => Self::Opus(OpusNormalizer::default()),
+        }
+    }
+
+    fn codec(&self) -> FlvAudioCodec {
+        match self {
+            Self::Aac(_) => FlvAudioCodec::Aac,
+            Self::Opus(_) => FlvAudioCodec::Opus,
+        }
+    }
+
+    fn on_configuration(
+        &mut self,
+        data: &[u8],
+        out: &mut Vec<AudioNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        match self {
+            Self::Aac(normalizer) => normalizer.on_configuration(data, out),
+            Self::Opus(normalizer) => normalizer.on_configuration(data, out),
+        }
+    }
+
+    fn push_access_unit(
+        &mut self,
+        unit: AudioAccessUnit<'_>,
+        out: &mut Vec<AudioNormalizerEvent>,
+    ) -> Result<(), CoreError> {
+        match self {
+            Self::Aac(normalizer) => normalizer.push_access_unit(unit, out),
+            Self::Opus(normalizer) => normalizer.push_access_unit(unit, out),
+        }
+    }
+
+    fn flush(&mut self, out: &mut Vec<AudioNormalizerEvent>) -> Result<(), CoreError> {
+        match self {
+            Self::Aac(normalizer) => normalizer.flush(out),
+            Self::Opus(normalizer) => normalizer.flush(out),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct FlvDemuxer {
     max_tag_data_size: usize,
     buffer: Vec<u8>,
     state: FlvParseState,
     media_info: MediaInfo,
     video_normalizer: Option<FlvVideoNormalizer>,
-    aac_normalizer: AacNormalizer,
+    audio_normalizer: Option<FlvAudioNormalizer>,
 }
 
 impl Default for FlvDemuxer {
@@ -165,7 +243,7 @@ impl FlvDemuxer {
             state: FlvParseState::Header,
             media_info: MediaInfo::flv(),
             video_normalizer: None,
-            aac_normalizer: AacNormalizer::default(),
+            audio_normalizer: None,
         }
     }
 
@@ -187,9 +265,12 @@ impl FlvDemuxer {
             normalizer.flush(&mut video_events)?;
             self.process_video_normalizer_events(video_events, out)?;
         }
-        let mut audio_events = Vec::new();
-        self.aac_normalizer.flush(&mut audio_events)?;
-        self.process_audio_normalizer_events(audio_events, out)
+        if let Some(normalizer) = &mut self.audio_normalizer {
+            let mut audio_events = Vec::new();
+            normalizer.flush(&mut audio_events)?;
+            self.process_audio_normalizer_events(audio_events, out)?;
+        }
+        Ok(())
     }
 
     fn parse_available(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
@@ -659,14 +740,22 @@ impl FlvDemuxer {
             ));
         }
 
-        let sound_format = payload[0] >> 4;
-        if sound_format != SOUND_FORMAT_AAC {
-            return Err(CoreError::new(
+        match payload[0] >> 4 {
+            SOUND_FORMAT_AAC => self.process_aac_audio_tag(header, payload, out),
+            SOUND_FORMAT_EX_AUDIO => self.process_enhanced_audio_tag(header, payload, out),
+            sound_format => Err(CoreError::new(
                 CoreErrorCode::UnsupportedAudioCodec,
                 format!("Unsupported FLV audio sound format {sound_format}."),
-            ));
+            )),
         }
+    }
 
+    fn process_aac_audio_tag(
+        &mut self,
+        header: FlvTagHeader,
+        payload: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
         if payload.len() < 2 {
             return Err(CoreError::new(
                 CoreErrorCode::InvalidContainerData,
@@ -677,24 +766,25 @@ impl FlvDemuxer {
         match payload[1] {
             AAC_PACKET_TYPE_SEQUENCE_HEADER => {
                 let mut codec_events = Vec::new();
-                self.aac_normalizer
+                self.audio_normalizer_mut(FlvAudioCodec::Aac)?
                     .on_configuration(&payload[2..], &mut codec_events)?;
                 self.process_audio_normalizer_events(codec_events, out)
             }
             AAC_PACKET_TYPE_RAW => {
                 let mut codec_events = Vec::new();
-                self.aac_normalizer.push_access_unit(
-                    AudioAccessUnit {
-                        track_id: TrackId::AUDIO,
-                        timing: SampleTiming {
-                            dts: header.timestamp_ms,
-                            pts: header.timestamp_ms,
+                self.audio_normalizer_mut(FlvAudioCodec::Aac)?
+                    .push_access_unit(
+                        AudioAccessUnit {
+                            track_id: TrackId::AUDIO,
+                            timing: SampleTiming {
+                                dts: header.timestamp_ms,
+                                pts: header.timestamp_ms,
+                            },
+                            input_timescale: FLV_TIMESCALE,
+                            data: AudioSampleData::RawAac(&payload[2..]),
                         },
-                        input_timescale: FLV_TIMESCALE,
-                        data: AudioSampleData::RawAac(&payload[2..]),
-                    },
-                    &mut codec_events,
-                )?;
+                        &mut codec_events,
+                    )?;
                 self.process_audio_normalizer_events(codec_events, out)
             }
             other => Err(CoreError::new(
@@ -702,6 +792,81 @@ impl FlvDemuxer {
                 format!("Unsupported AAC packet type {other}."),
             )),
         }
+    }
+
+    fn process_enhanced_audio_tag(
+        &mut self,
+        header: FlvTagHeader,
+        payload: &[u8],
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        if payload.len() < 5 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "Enhanced FLV audio tag is too short for a FourCC.",
+            ));
+        }
+
+        let packet_type = payload[0] & 0b0000_1111;
+        let codec = FlvAudioCodec::from_fourcc(&payload[1..5])?;
+        match packet_type {
+            AUDIO_PACKET_TYPE_SEQUENCE_START => {
+                let mut codec_events = Vec::new();
+                self.audio_normalizer_mut(codec)?
+                    .on_configuration(&payload[5..], &mut codec_events)?;
+                self.process_audio_normalizer_events(codec_events, out)
+            }
+            AUDIO_PACKET_TYPE_CODED_FRAMES => {
+                let mut codec_events = Vec::new();
+                self.audio_normalizer_mut(codec)?.push_access_unit(
+                    AudioAccessUnit {
+                        track_id: TrackId::AUDIO,
+                        timing: SampleTiming {
+                            dts: header.timestamp_ms,
+                            pts: header.timestamp_ms,
+                        },
+                        input_timescale: FLV_TIMESCALE,
+                        data: AudioSampleData::RawOpus(&payload[5..]),
+                    },
+                    &mut codec_events,
+                )?;
+                self.process_audio_normalizer_events(codec_events, out)
+            }
+            AUDIO_PACKET_TYPE_SEQUENCE_END => Ok(()),
+            AUDIO_PACKET_TYPE_MULTICHANNEL_CONFIG => Err(CoreError::new(
+                CoreErrorCode::UnsupportedAudioCodec,
+                "Enhanced FLV Opus multichannel configuration is not supported.",
+            )),
+            AUDIO_PACKET_TYPE_MULTITRACK => Err(CoreError::new(
+                CoreErrorCode::UnsupportedAudioCodec,
+                "Enhanced FLV Opus multitrack audio is not supported.",
+            )),
+            AUDIO_PACKET_TYPE_MOD_EX => Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "Enhanced FLV AudioPacketType.ModEx is not supported.",
+            )),
+            other => Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                format!("Unsupported Enhanced FLV audio packet type {other}."),
+            )),
+        }
+    }
+
+    fn audio_normalizer_mut(
+        &mut self,
+        codec: FlvAudioCodec,
+    ) -> Result<&mut FlvAudioNormalizer, CoreError> {
+        if let Some(normalizer) = &self.audio_normalizer
+            && normalizer.codec() != codec
+        {
+            return Err(CoreError::new(
+                CoreErrorCode::UnsupportedAudioCodec,
+                "FLV stream changes audio codec after audio initialization.",
+            ));
+        }
+        Ok(self
+            .audio_normalizer
+            .get_or_insert_with(|| FlvAudioNormalizer::new(codec)))
     }
 
     fn process_audio_normalizer_events(

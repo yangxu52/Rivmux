@@ -58,6 +58,7 @@ pub(crate) struct AudioAccessUnit<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AudioSampleData<'a> {
     RawAac(&'a [u8]),
+    RawOpus(&'a [u8]),
     #[cfg_attr(
         not(test),
         expect(

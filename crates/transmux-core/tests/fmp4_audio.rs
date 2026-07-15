@@ -2,8 +2,8 @@ mod support;
 
 use rivmux_transmux_core::{CoreConfig, CoreEvent, TrackKind, TransmuxCore};
 use support::{
-    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, find_box, minimal_avcc,
-    read_box_type, video_sample_tag, video_sequence_header_tag,
+    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, enhanced_audio_tag, find_box,
+    minimal_avcc, read_box_type, video_sample_tag, video_sequence_header_tag,
 };
 
 #[test]
@@ -45,6 +45,46 @@ fn emits_aac_init_and_media_segment() {
     assert_eq!(read_box_type(&media.bytes, 0), "moof");
     assert!(find_box(&media.bytes, b"mdat").is_some());
     assert!(media.bytes.ends_with(&[0x21, 0x22, 0x23, 0x24]));
+}
+
+#[test]
+fn emits_opus_init_and_media_segment() {
+    let input = build_flv(vec![
+        enhanced_audio_tag(0, 0, b"Opus", &stereo_opus_head()),
+        enhanced_audio_tag(20, 1, b"Opus", &[0xF8, 0xFF, 0xFE]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    let init = events
+        .iter()
+        .find_map(|event| match event {
+            CoreEvent::InitSegment(segment) if segment.track == TrackKind::Audio => Some(segment),
+            _ => None,
+        })
+        .expect("expected audio init segment");
+    let media = events
+        .iter()
+        .find_map(|event| match event {
+            CoreEvent::MediaSegment(segment) if segment.track == TrackKind::Audio => Some(segment),
+            _ => None,
+        })
+        .expect("expected audio media segment");
+
+    assert_eq!(init.codec, "opus");
+    assert_eq!(init.timescale, 48_000);
+    assert!(find_box(&init.bytes, b"Opus").is_some());
+    let dops_offset = find_box(&init.bytes, b"dOps").expect("expected dOps box");
+    assert_eq!(
+        &init.bytes[dops_offset + 8..dops_offset + 19],
+        [0, 2, 0x01, 0x38, 0, 0, 0xBB, 0x80, 0, 0, 0]
+    );
+    assert_eq!(media.dts_start_ms, 0);
+    assert_eq!(media.dts_end_ms, 20);
+    assert_eq!(read_trun_sample_duration(&media.bytes), 960);
+    assert!(media.bytes.ends_with(&[0xF8, 0xFF, 0xFE]));
 }
 
 #[test]
@@ -153,4 +193,15 @@ fn is_muxed_init_or_media_segment(event: &CoreEvent) -> bool {
         CoreEvent::MediaSegment(segment) => segment.track == TrackKind::Muxed,
         _ => false,
     }
+}
+
+fn stereo_opus_head() -> [u8; 19] {
+    [
+        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0,
+    ]
+}
+
+fn read_trun_sample_duration(bytes: &[u8]) -> u32 {
+    let offset = find_box(bytes, b"trun").expect("expected trun box");
+    u32::from_be_bytes(bytes[offset + 20..offset + 24].try_into().unwrap())
 }

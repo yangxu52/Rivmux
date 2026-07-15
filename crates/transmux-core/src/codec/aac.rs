@@ -99,6 +99,10 @@ impl AudioFrameNormalizer for AacNormalizer {
                 }));
                 Ok(())
             }
+            AudioSampleData::RawOpus(_) => Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AAC normalizer received a non-AAC audio access unit.",
+            )),
             AudioSampleData::Adts(data) => self.normalize_adts_access_unit(
                 unit.track_id,
                 unit.timing,

@@ -68,6 +68,18 @@ pub fn audio_sample_tag(timestamp_ms: u32, sample: &[u8]) -> Vec<u8> {
     raw_tag(8, timestamp_ms, &payload)
 }
 
+pub fn enhanced_audio_tag(
+    timestamp_ms: u32,
+    packet_type: u8,
+    fourcc: &[u8; 4],
+    body: &[u8],
+) -> Vec<u8> {
+    let mut payload = vec![0x90 | packet_type];
+    payload.extend_from_slice(fourcc);
+    payload.extend_from_slice(body);
+    raw_tag(8, timestamp_ms, &payload)
+}
+
 pub fn raw_tag(tag_type: u8, timestamp_ms: u32, payload: &[u8]) -> Vec<u8> {
     raw_tag_with_previous_size(tag_type, timestamp_ms, payload, (11 + payload.len()) as u32)
 }
@@ -153,7 +165,7 @@ fn find_box_from(bytes: &[u8], name: &[u8; 4], start: usize) -> Option<usize> {
             return Some(offset + 8 + child_offset);
         }
 
-        if &bytes[offset + 4..offset + 8] == b"mp4a"
+        if matches!(&bytes[offset + 4..offset + 8], b"mp4a" | b"Opus")
             && let Some(child_offset) = find_box_from(&bytes[offset + 8..offset + size], name, 28)
         {
             return Some(offset + 8 + child_offset);

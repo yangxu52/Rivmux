@@ -5,9 +5,9 @@ use rivmux_transmux_core::{
     EncodedSample, TrackConfig, TransmuxCore, VideoCodecConfig, VideoCodecKind,
 };
 use support::{
-    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, enhanced_video_tag, find_box,
-    flv_header, minimal_avcc, minimal_hvcc, raw_tag, raw_tag_with_previous_size, video_sample_tag,
-    video_sequence_header_tag,
+    audio_sample_tag, audio_sequence_header_tag, build_flv, drain, enhanced_audio_tag,
+    enhanced_video_tag, find_box, flv_header, minimal_avcc, minimal_hvcc, raw_tag,
+    raw_tag_with_previous_size, video_sample_tag, video_sequence_header_tag,
 };
 
 #[test]
@@ -116,6 +116,73 @@ fn rejects_unsupported_video_codec_with_structured_error() {
 #[test]
 fn rejects_unsupported_audio_codec_with_structured_error() {
     let input = build_flv(vec![raw_tag(8, 0, &[0x20])]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    let error = core.push_chunk(&input).unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::UnsupportedAudioCodec);
+}
+
+#[test]
+fn parses_enhanced_flv_opus_audio() {
+    let input = build_flv(vec![
+        enhanced_audio_tag(0, 0, b"Opus", &stereo_opus_head()),
+        enhanced_audio_tag(20, 1, b"Opus", &[0xF8, 0xFF, 0xFE]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    for chunk in input.chunks(3) {
+        core.push_chunk(chunk).unwrap();
+    }
+    let events = drain(&mut core);
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::ProbeResult(probe) if probe.audio == Some(AudioCodecKind::Opus)
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::TrackConfig(TrackConfig::Audio(track))
+                if matches!(
+                    &track.codec,
+                    AudioCodecConfig::Opus(config)
+                        if config.codec_string == "opus"
+                            && config.channel_count == 2
+                            && config.pre_skip == 312
+                )
+                    && track.clock.input_timescale() == 1_000
+                    && track.clock.fmp4_timescale() == 48_000
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::Sample(EncodedSample::Audio {
+                timing,
+                duration,
+                data,
+                ..
+            }) if timing.dts == 0 && timing.pts == 0 && *duration == 960 && *data == [0xF8, 0xFF, 0xFE]
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::InitSegment(segment)
+                if segment.codec == "opus"
+                    && segment.timescale == 48_000
+                    && find_box(&segment.bytes, b"Opus").is_some()
+                    && find_box(&segment.bytes, b"dOps").is_some()
+        )
+    }));
+}
+
+#[test]
+fn rejects_enhanced_flv_opus_multitrack_audio() {
+    let input = build_flv(vec![enhanced_audio_tag(0, 5, b"Opus", &[])]);
     let mut core = TransmuxCore::new(CoreConfig::default());
 
     let error = core.push_chunk(&input).unwrap_err();
@@ -316,6 +383,12 @@ fn rejects_unknown_enhanced_flv_video_fourcc() {
     let error = core.push_chunk(&input).unwrap_err();
 
     assert_eq!(error.code, CoreErrorCode::UnsupportedVideoCodec);
+}
+
+fn stereo_opus_head() -> [u8; 19] {
+    [
+        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0,
+    ]
 }
 
 #[test]
