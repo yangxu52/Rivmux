@@ -1,6 +1,7 @@
 use crate::codec::AudioCodecConfig;
 use crate::codec::normalizer::{
     AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData,
+    accept_initial_configuration,
 };
 use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::{EncodedSample, SampleTiming};
@@ -48,6 +49,18 @@ impl AacConfig {
                 "AAC AudioSpecificConfig uses unsupported program-config channel layout.",
             ));
         }
+        if channel_count > 7 {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "AAC AudioSpecificConfig uses a reserved channel configuration.",
+            ));
+        }
+        if data[1] & 0b0000_0100 != 0 {
+            return Err(CoreError::new(
+                CoreErrorCode::UnsupportedAudioCodec,
+                "AAC-LC AudioSpecificConfig with a 960-sample frame length is not supported.",
+            ));
+        }
 
         Ok(Self {
             codec_string: "mp4a.40.2".to_string(),
@@ -71,10 +84,11 @@ impl AudioFrameNormalizer for AacNormalizer {
         out: &mut Vec<AudioNormalizerEvent>,
     ) -> Result<(), CoreError> {
         let config = AacConfig::from_audio_specific_config(data)?;
-        self.config = Some(config.clone());
-        out.push(AudioNormalizerEvent::Configuration(AudioCodecConfig::Aac(
-            config,
-        )));
+        if accept_initial_configuration(&mut self.config, config.clone(), "AAC")? {
+            out.push(AudioNormalizerEvent::Configuration(AudioCodecConfig::Aac(
+                config,
+            )));
+        }
         Ok(())
     }
 
@@ -144,8 +158,7 @@ impl AacNormalizer {
         let mut sample_offset = 0_u64;
         while offset < data.len() {
             let header = AdtsHeader::parse(data, offset)?;
-            if self.config.as_ref() != Some(&header.config) {
-                self.config = Some(header.config.clone());
+            if accept_initial_configuration(&mut self.config, header.config.clone(), "AAC")? {
                 out.push(AudioNormalizerEvent::Configuration(AudioCodecConfig::Aac(
                     header.config.clone(),
                 )));
@@ -302,7 +315,7 @@ fn sample_rate_from_index(index: u8) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::AacNormalizer;
+    use super::{AacConfig, AacNormalizer};
     use crate::codec::normalizer::{
         AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData,
     };
@@ -365,6 +378,44 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
+    }
+
+    #[test]
+    fn ignores_repeated_audio_specific_config_and_rejects_a_change() {
+        let mut normalizer = AacNormalizer::default();
+        let mut events = Vec::new();
+
+        normalizer
+            .on_configuration(&[0x12, 0x10], &mut events)
+            .unwrap();
+        normalizer
+            .on_configuration(&[0x12, 0x10], &mut events)
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [AudioNormalizerEvent::Configuration(_)]
+        ));
+
+        let error = normalizer
+            .on_configuration(&[0x12, 0x08], &mut events)
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
+    }
+
+    #[test]
+    fn rejects_reserved_channel_configuration() {
+        let error = AacConfig::from_audio_specific_config(&[0x12, 0x40]).unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
+    }
+
+    #[test]
+    fn rejects_nine_hundred_sixty_sample_frame_length() {
+        let error = AacConfig::from_audio_specific_config(&[0x12, 0x14]).unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::UnsupportedAudioCodec);
     }
 
     #[test]

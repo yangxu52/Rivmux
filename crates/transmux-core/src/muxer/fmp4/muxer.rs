@@ -52,6 +52,15 @@ impl Fmp4Muxer {
         config: VideoTrackConfig,
         _out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
+        if let Some(previous) = &self.video_config {
+            if previous == &config {
+                return Ok(());
+            }
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "Video configuration changes after muxer initialization are not supported.",
+            ));
+        }
         self.video_config = Some(config);
         self.next_video_sequence_number = 1;
         self.video_started = false;
@@ -66,6 +75,15 @@ impl Fmp4Muxer {
         config: AudioTrackConfig,
         _out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
+        if let Some(previous) = &self.audio_config {
+            if previous == &config {
+                return Ok(());
+            }
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "Audio configuration changes after muxer initialization are not supported.",
+            ));
+        }
         self.audio_config = Some(config);
         self.next_audio_sequence_number = 1;
         self.audio_init_emitted = false;

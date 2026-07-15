@@ -1,5 +1,5 @@
 use crate::codec::{AudioCodecConfig, VideoCodecConfig};
-use crate::error::CoreError;
+use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::{EncodedSample, SampleTiming};
 use crate::track::TrackId;
 
@@ -73,6 +73,24 @@ pub(crate) enum AudioSampleData<'a> {
 pub(crate) enum AudioNormalizerEvent {
     Configuration(AudioCodecConfig),
     Sample(EncodedSample),
+}
+
+pub(crate) fn accept_initial_configuration<T: PartialEq>(
+    current: &mut Option<T>,
+    next: T,
+    codec_name: &str,
+) -> Result<bool, CoreError> {
+    match current {
+        Some(existing) if existing == &next => Ok(false),
+        Some(_) => Err(CoreError::new(
+            CoreErrorCode::InvalidCodecConfig,
+            format!("{codec_name} configuration changes after initialization are not supported."),
+        )),
+        None => {
+            *current = Some(next);
+            Ok(true)
+        }
+    }
 }
 
 pub(crate) trait AudioFrameNormalizer {

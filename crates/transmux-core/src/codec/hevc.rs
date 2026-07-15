@@ -1,6 +1,7 @@
 use crate::codec::VideoCodecConfig;
 use crate::codec::normalizer::{
     VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+    accept_initial_configuration,
 };
 use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::EncodedSample;
@@ -114,13 +115,14 @@ impl VideoAccessUnitNormalizer for HevcNormalizer {
     ) -> Result<(), CoreError> {
         let config = HevcConfig::from_hvcc(data)?;
         let parameter_sets = parameter_sets_from_hvcc(data)?;
-        self.vps = parameter_sets.vps;
-        self.sps = parameter_sets.sps;
-        self.pps = parameter_sets.pps;
-        self.config = Some(config.clone());
-        out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Hevc(
-            config,
-        )));
+        if accept_initial_configuration(&mut self.config, config.clone(), "HEVC")? {
+            self.vps = parameter_sets.vps;
+            self.sps = parameter_sets.sps;
+            self.pps = parameter_sets.pps;
+            out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Hevc(
+                config,
+            )));
+        }
         Ok(())
     }
 
@@ -191,23 +193,37 @@ impl HevcNormalizer {
             return Ok(());
         }
 
-        let mut parameter_sets_changed = false;
-        if !vps.is_empty() && self.vps != vps {
-            self.vps = vps;
-            parameter_sets_changed = true;
-        }
-        if !sps.is_empty() && self.sps != sps {
-            self.sps = sps;
-            parameter_sets_changed = true;
-        }
-        if !pps.is_empty() && self.pps != pps {
-            self.pps = pps;
-            parameter_sets_changed = true;
-        }
+        let next_vps = if vps.is_empty() {
+            self.vps.clone()
+        } else {
+            vps
+        };
+        let next_sps = if sps.is_empty() {
+            self.sps.clone()
+        } else {
+            sps
+        };
+        let next_pps = if pps.is_empty() {
+            self.pps.clone()
+        } else {
+            pps
+        };
+        let parameter_sets_changed =
+            self.vps != next_vps || self.sps != next_sps || self.pps != next_pps;
 
         if !parameter_sets_changed {
             return Ok(());
         }
+
+        if self.config.is_some() {
+            return Err(invalid_config(
+                "HEVC parameter sets change after initialization is not supported.",
+            ));
+        }
+
+        self.vps = next_vps;
+        self.sps = next_sps;
+        self.pps = next_pps;
 
         if self.vps.is_empty() || self.sps.is_empty() || self.pps.is_empty() {
             return Ok(());
@@ -217,8 +233,7 @@ impl HevcNormalizer {
         let sps: Vec<&[u8]> = self.sps.iter().map(Vec::as_slice).collect();
         let pps: Vec<&[u8]> = self.pps.iter().map(Vec::as_slice).collect();
         let config = HevcConfig::from_parameter_sets(&vps, &sps, &pps)?;
-        if self.config.as_ref() != Some(&config) {
-            self.config = Some(config.clone());
+        if accept_initial_configuration(&mut self.config, config.clone(), "HEVC")? {
             out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Hevc(
                 config,
             )));
@@ -820,6 +835,7 @@ mod tests {
     use crate::codec::normalizer::{
         VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
     };
+    use crate::error::CoreErrorCode;
     use crate::sample::{EncodedSample, SampleTiming};
     use crate::track::TrackId;
 
@@ -979,6 +995,36 @@ mod tests {
                 ..
             })] if *data == [0, 0, 0, 3, 0x2A, 0x01, 0x80]
         ));
+    }
+
+    #[test]
+    fn ignores_repeated_configuration_and_rejects_a_change() {
+        let vps = minimal_vps();
+        let sps = minimal_sps(640, 360);
+        let pps = minimal_pps();
+        let config = HevcConfig::from_parameter_sets(&[&vps], &[&sps], &[&pps]).unwrap();
+        let mut normalizer = HevcNormalizer::default();
+        let mut events = Vec::new();
+
+        normalizer
+            .on_configuration(&config.hvcc, &mut events)
+            .unwrap();
+        normalizer
+            .on_configuration(&config.hvcc, &mut events)
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Configuration(_)]
+        ));
+
+        let mut changed = config.hvcc;
+        changed[12] = 121;
+        let error = normalizer
+            .on_configuration(&changed, &mut events)
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
     }
 
     #[test]

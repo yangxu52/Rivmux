@@ -71,12 +71,12 @@ impl TransmuxCore {
         for event in demux_events {
             match event {
                 CoreEvent::TrackConfig(config) => {
-                    self.events.push(CoreEvent::TrackConfig(config.clone()));
-                    self.timeline.on_track_config(&config);
                     let mut mux_events = Vec::new();
-                    let mux_result = self.muxer.on_track_config(config, &mut mux_events);
-                    self.events.extend(mux_events);
+                    let mux_result = self.muxer.on_track_config(config.clone(), &mut mux_events);
                     self.capture_result(mux_result)?;
+                    self.timeline.on_track_config(&config);
+                    self.events.push(CoreEvent::TrackConfig(config));
+                    self.events.extend(mux_events);
                 }
                 CoreEvent::Sample(sample) => {
                     let normalized = self.timeline.normalize_sample(sample);

@@ -1,6 +1,7 @@
 use crate::codec::AudioCodecConfig;
 use crate::codec::normalizer::{
     AudioAccessUnit, AudioFrameNormalizer, AudioNormalizerEvent, AudioSampleData,
+    accept_initial_configuration,
 };
 use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::EncodedSample;
@@ -88,20 +89,11 @@ impl AudioFrameNormalizer for OpusNormalizer {
         out: &mut Vec<AudioNormalizerEvent>,
     ) -> Result<(), CoreError> {
         let config = OpusConfig::from_opus_head(data)?;
-        if let Some(previous) = &self.config {
-            if previous == &config {
-                return Ok(());
-            }
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidCodecConfig,
-                "Opus configuration changes after audio initialization are not supported.",
-            ));
+        if accept_initial_configuration(&mut self.config, config.clone(), "Opus")? {
+            out.push(AudioNormalizerEvent::Configuration(AudioCodecConfig::Opus(
+                config,
+            )));
         }
-
-        self.config = Some(config.clone());
-        out.push(AudioNormalizerEvent::Configuration(AudioCodecConfig::Opus(
-            config,
-        )));
         Ok(())
     }
 
@@ -276,5 +268,31 @@ mod tests {
         let error = OpusConfig::from_opus_head(&header).unwrap_err();
 
         assert_eq!(error.code, CoreErrorCode::UnsupportedAudioCodec);
+    }
+
+    #[test]
+    fn ignores_repeated_configuration_and_rejects_a_change() {
+        let mut normalizer = OpusNormalizer::default();
+        let mut events = Vec::new();
+
+        normalizer
+            .on_configuration(&STEREO_OPUS_HEAD, &mut events)
+            .unwrap();
+        normalizer
+            .on_configuration(&STEREO_OPUS_HEAD, &mut events)
+            .unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [AudioNormalizerEvent::Configuration(_)]
+        ));
+
+        let mut changed = STEREO_OPUS_HEAD;
+        changed[10] = 0x39;
+        let error = normalizer
+            .on_configuration(&changed, &mut events)
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
     }
 }

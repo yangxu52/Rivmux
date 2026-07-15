@@ -1,6 +1,7 @@
 use crate::codec::VideoCodecConfig;
 use crate::codec::normalizer::{
     VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+    accept_initial_configuration,
 };
 use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::EncodedSample;
@@ -145,10 +146,11 @@ impl VideoAccessUnitNormalizer for AvcNormalizer {
         out: &mut Vec<VideoNormalizerEvent>,
     ) -> Result<(), CoreError> {
         let config = AvcConfig::from_avcc(data)?;
-        self.config = Some(config.clone());
-        out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Avc(
-            config,
-        )));
+        if accept_initial_configuration(&mut self.config, config.clone(), "AVC")? {
+            out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Avc(
+                config,
+            )));
+        }
         Ok(())
     }
 
@@ -213,8 +215,7 @@ impl AvcNormalizer {
             .collect();
         if !sps.is_empty() || !pps.is_empty() {
             let config = AvcConfig::from_parameter_sets(&sps, &pps)?;
-            if self.config.as_ref() != Some(&config) {
-                self.config = Some(config.clone());
+            if accept_initial_configuration(&mut self.config, config.clone(), "AVC")? {
                 out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Avc(
                     config,
                 )));
@@ -720,6 +721,29 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+    }
+
+    #[test]
+    fn ignores_repeated_configuration_and_rejects_a_change() {
+        let mut normalizer = AvcNormalizer::default();
+        let mut events = Vec::new();
+        let config = minimal_avcc();
+
+        normalizer.on_configuration(&config, &mut events).unwrap();
+        normalizer.on_configuration(&config, &mut events).unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Configuration(_)]
+        ));
+
+        let mut changed = config;
+        changed[3] = 0x1F;
+        let error = normalizer
+            .on_configuration(&changed, &mut events)
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
     }
 
     #[test]

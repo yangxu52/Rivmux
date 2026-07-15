@@ -1,6 +1,7 @@
 use crate::codec::VideoCodecConfig;
 use crate::codec::normalizer::{
     VideoAccessUnit, VideoAccessUnitNormalizer, VideoNormalizerEvent, VideoSampleData,
+    accept_initial_configuration,
 };
 use crate::error::{CoreError, CoreErrorCode};
 use crate::sample::EncodedSample;
@@ -80,10 +81,11 @@ impl VideoAccessUnitNormalizer for Av1Normalizer {
         out: &mut Vec<VideoNormalizerEvent>,
     ) -> Result<(), CoreError> {
         let config = Av1Config::from_av1c(data)?;
-        self.config = Some(config.clone());
-        out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Av1(
-            config,
-        )));
+        if accept_initial_configuration(&mut self.config, config.clone(), "AV1")? {
+            out.push(VideoNormalizerEvent::Configuration(VideoCodecConfig::Av1(
+                config,
+            )));
+        }
         Ok(())
     }
 
@@ -230,6 +232,27 @@ mod tests {
                 },
                 &mut events,
             )
+            .unwrap_err();
+
+        assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
+    }
+
+    #[test]
+    fn ignores_repeated_configuration_and_rejects_a_change() {
+        let mut normalizer = Av1Normalizer::default();
+        let mut events = Vec::new();
+        let config = minimal_av1c();
+
+        normalizer.on_configuration(&config, &mut events).unwrap();
+        normalizer.on_configuration(&config, &mut events).unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [VideoNormalizerEvent::Configuration(_)]
+        ));
+
+        let error = normalizer
+            .on_configuration(&[0x81, 0x09, 0x00, 0x00], &mut events)
             .unwrap_err();
 
         assert_eq!(error.code, CoreErrorCode::InvalidCodecConfig);
