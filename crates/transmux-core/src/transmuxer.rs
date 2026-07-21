@@ -41,6 +41,8 @@ impl TransmuxCore {
     pub fn push_chunk(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let mut demux_events = Vec::new();
         let demux_result = self.demuxer.push(data, &mut demux_events);
+        self.muxer
+            .set_expected_tracks(self.demuxer.expects_video(), self.demuxer.expects_audio());
         self.capture_result(demux_result)?;
         self.process_demux_events(demux_events)
     }

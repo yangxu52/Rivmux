@@ -71,7 +71,7 @@ export class MseController {
   }
 
   async appendMediaSegment(segment: CoreMediaSegment): Promise<void> {
-    const queue = this.queues.get(segment.track)
+    const queue = this.queues.get(segment.track) ?? this.queues.get('muxed')
     if (queue === undefined) {
       throw new Error(`Cannot append ${segment.track} media segment before init segment.`)
     }

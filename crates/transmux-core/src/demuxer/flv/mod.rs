@@ -223,6 +223,8 @@ pub(crate) struct FlvDemuxer {
     max_tag_data_size: usize,
     buffer: Vec<u8>,
     state: FlvParseState,
+    expects_video: bool,
+    expects_audio: bool,
     media_info: MediaInfo,
     video_normalizer: Option<FlvVideoNormalizer>,
     audio_normalizer: Option<FlvAudioNormalizer>,
@@ -241,6 +243,8 @@ impl FlvDemuxer {
             max_tag_data_size,
             buffer: Vec::new(),
             state: FlvParseState::Header,
+            expects_video: false,
+            expects_audio: false,
             media_info: MediaInfo::flv(),
             video_normalizer: None,
             audio_normalizer: None,
@@ -271,6 +275,14 @@ impl FlvDemuxer {
             self.process_audio_normalizer_events(audio_events, out)?;
         }
         Ok(())
+    }
+
+    pub(crate) const fn expects_audio(&self) -> bool {
+        self.expects_audio
+    }
+
+    pub(crate) const fn expects_video(&self) -> bool {
+        self.expects_video
     }
 
     fn parse_available(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
@@ -323,6 +335,9 @@ impl FlvDemuxer {
                 "Unsupported FLV version.",
             ));
         }
+
+        self.expects_audio = self.buffer[4] & 0b0000_0100 != 0;
+        self.expects_video = self.buffer[4] & 0b0000_0001 != 0;
 
         let data_offset = u32::from_be_bytes([
             self.buffer[5],

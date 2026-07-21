@@ -12,7 +12,9 @@ pub fn drain(core: &mut TransmuxCore) -> Vec<CoreEvent> {
 }
 
 pub fn build_flv(tags: Vec<Vec<u8>>) -> Vec<u8> {
-    let mut output = flv_header();
+    let has_audio = tags.iter().any(|tag| tag.first() == Some(&8));
+    let has_video = tags.iter().any(|tag| tag.first() == Some(&9));
+    let mut output = flv_header_with_tracks(has_audio, has_video);
     for tag in tags {
         output.extend_from_slice(&tag);
     }
@@ -20,7 +22,12 @@ pub fn build_flv(tags: Vec<Vec<u8>>) -> Vec<u8> {
 }
 
 pub fn flv_header() -> Vec<u8> {
-    vec![b'F', b'L', b'V', 1, 0b0000_0101, 0, 0, 0, 9, 0, 0, 0, 0]
+    flv_header_with_tracks(true, true)
+}
+
+fn flv_header_with_tracks(has_audio: bool, has_video: bool) -> Vec<u8> {
+    let flags = (u8::from(has_audio) << 2) | u8::from(has_video);
+    vec![b'F', b'L', b'V', 1, flags, 0, 0, 0, 9, 0, 0, 0, 0]
 }
 
 pub fn video_sequence_header_tag(avcc: &[u8]) -> Vec<u8> {

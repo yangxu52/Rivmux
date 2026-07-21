@@ -8,7 +8,7 @@ describe('MseController SourceBuffer strategy', () => {
     vi.unstubAllGlobals()
   })
 
-  it('requires media segments to match an initialized SourceBuffer track', async () => {
+  it('routes audio and video media segments through one muxed SourceBuffer', async () => {
     const registry = installMockMse()
     const controller = new MseController()
 
@@ -20,17 +20,23 @@ describe('MseController SourceBuffer strategy', () => {
       bytes: new Uint8Array([1, 2, 3]),
     })
 
-    await expect(
-      controller.appendMediaSegment({
-        track: 'video',
-        dtsStartMs: 0,
-        dtsEndMs: 40,
-        keyframe: true,
-        bytes: new Uint8Array([4, 5, 6]),
-      })
-    ).rejects.toThrow('Cannot append video media segment before init segment.')
+    await controller.appendMediaSegment({
+      track: 'video',
+      dtsStartMs: 0,
+      dtsEndMs: 40,
+      keyframe: true,
+      bytes: new Uint8Array([4, 5, 6]),
+    })
+    await controller.appendMediaSegment({
+      track: 'audio',
+      dtsStartMs: 0,
+      dtsEndMs: 23,
+      keyframe: true,
+      bytes: new Uint8Array([7, 8, 9]),
+    })
     expect(registry.sourceBuffers).toHaveLength(1)
-    expect(registry.sourceBuffers[0]?.appendCount).toBe(1)
+    expect(registry.sourceBuffers[0]?.mimeType).toBe('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')
+    expect(registry.sourceBuffers[0]?.appendCount).toBe(3)
   })
 
   it('uses separate SourceBuffers for separate video and audio init segments', async () => {

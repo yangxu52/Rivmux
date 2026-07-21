@@ -355,7 +355,7 @@ export class RuntimeWorker {
           this.failWithError(coreErrorToPlayerError(event.data))
           return false
         case 'initSegment':
-          if (!(await this.flushFmp4AppendBatches(event.data.track))) {
+          if (!(await this.flushFmp4AppendBatches())) {
             return false
           }
           if (!(await this.appendToMse(() => this.mse?.appendInitSegment(event.data)))) {
@@ -381,7 +381,7 @@ export class RuntimeWorker {
       }
     }
 
-    return true
+    return this.fmp4AppendTail
   }
 
   private startFmp4AppendBatcher(): void {

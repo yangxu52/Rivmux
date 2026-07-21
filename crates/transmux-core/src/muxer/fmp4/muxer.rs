@@ -2,7 +2,7 @@ use crate::error::{CoreError, CoreErrorCode};
 use crate::event::{CoreEvent, CoreWarning, InitSegment, MediaSegment, TrackKind};
 use crate::muxer::fmp4::init_segment::{
     Fmp4AudioCodec, Fmp4VideoCodec, audio_timescale, build_audio_init_segment,
-    build_video_init_segment, video_timescale,
+    build_muxed_init_segment, build_video_init_segment, video_timescale,
 };
 use crate::muxer::fmp4::media_segment::{
     audio_sample_duration, build_audio_media_segment, build_video_media_segment,
@@ -11,6 +11,8 @@ use crate::muxer::fmp4::media_segment::{
 use crate::sample::EncodedSample;
 use crate::track::{AudioTrackConfig, MediaKind, TrackConfig, VideoTrackConfig};
 
+const MAX_PENDING_SAMPLES_BEFORE_INITIALIZATION_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Default)]
 pub(crate) struct Fmp4Muxer {
     video_config: Option<VideoTrackConfig>,
@@ -18,13 +20,21 @@ pub(crate) struct Fmp4Muxer {
     next_video_sequence_number: u32,
     next_audio_sequence_number: u32,
     video_started: bool,
-    video_init_emitted: bool,
-    audio_init_emitted: bool,
+    expects_video: bool,
+    expects_audio: bool,
+    init_segment_mode: InitSegmentMode,
+    pending_samples_before_initialization: Vec<EncodedSample>,
+    pending_samples_before_initialization_bytes: usize,
     pending_video_sample: Option<EncodedSample>,
     last_video_sample_duration: Option<u32>,
 }
 
 impl Fmp4Muxer {
+    pub(crate) fn set_expected_tracks(&mut self, expects_video: bool, expects_audio: bool) {
+        self.expects_video |= expects_video;
+        self.expects_audio |= expects_audio;
+    }
+
     pub(crate) fn on_track_config(
         &mut self,
         config: TrackConfig,
@@ -50,7 +60,7 @@ impl Fmp4Muxer {
     fn on_video_config(
         &mut self,
         config: VideoTrackConfig,
-        _out: &mut Vec<CoreEvent>,
+        out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
         if let Some(previous) = &self.video_config {
             if previous == &config {
@@ -61,19 +71,26 @@ impl Fmp4Muxer {
                 "Video configuration changes after muxer initialization are not supported.",
             ));
         }
+        if self.init_segment_mode != InitSegmentMode::None {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "FLV video configuration arrived after initialization.",
+            ));
+        }
         self.video_config = Some(config);
         self.next_video_sequence_number = 1;
         self.video_started = false;
-        self.video_init_emitted = false;
         self.pending_video_sample = None;
         self.last_video_sample_duration = None;
+        self.emit_initial_segment_if_ready(out);
+        self.flush_pending_samples_before_initialization(out)?;
         Ok(())
     }
 
     fn on_audio_config(
         &mut self,
         config: AudioTrackConfig,
-        _out: &mut Vec<CoreEvent>,
+        out: &mut Vec<CoreEvent>,
     ) -> Result<(), CoreError> {
         if let Some(previous) = &self.audio_config {
             if previous == &config {
@@ -84,9 +101,16 @@ impl Fmp4Muxer {
                 "Audio configuration changes after muxer initialization are not supported.",
             ));
         }
+        if self.init_segment_mode != InitSegmentMode::None {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidContainerData,
+                "FLV audio configuration arrived after initialization.",
+            ));
+        }
         self.audio_config = Some(config);
         self.next_audio_sequence_number = 1;
-        self.audio_init_emitted = false;
+        self.emit_initial_segment_if_ready(out);
+        self.flush_pending_samples_before_initialization(out)?;
         Ok(())
     }
 
@@ -120,12 +144,88 @@ impl Fmp4Muxer {
             self.video_started = true;
         }
 
+        if !self.has_all_declared_track_configs() {
+            self.queue_sample_before_initialization(sample)?;
+            return Ok(());
+        }
+
+        self.push_initialized_video(sample, clock, out);
+        Ok(())
+    }
+
+    fn push_initialized_video(
+        &mut self,
+        sample: EncodedSample,
+        clock: crate::track::TrackClock,
+        out: &mut Vec<CoreEvent>,
+    ) {
         self.ensure_video_init_segment(out);
         if let Some(previous) = self.pending_video_sample.take() {
             let duration = infer_video_sample_duration(&previous, &sample, clock);
             self.emit_video_media_segment(previous, duration, clock, out);
         }
         self.pending_video_sample = Some(sample);
+    }
+
+    fn queue_sample_before_initialization(
+        &mut self,
+        sample: EncodedSample,
+    ) -> Result<(), CoreError> {
+        let next_bytes = self
+            .pending_samples_before_initialization_bytes
+            .saturating_add(sample.data().len());
+        if next_bytes > MAX_PENDING_SAMPLES_BEFORE_INITIALIZATION_BYTES {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "Declared FLV track configuration did not arrive before the startup buffer limit.",
+            ));
+        }
+
+        self.pending_samples_before_initialization_bytes = next_bytes;
+        self.pending_samples_before_initialization.push(sample);
+        Ok(())
+    }
+
+    fn flush_pending_samples_before_initialization(
+        &mut self,
+        out: &mut Vec<CoreEvent>,
+    ) -> Result<(), CoreError> {
+        if !self.has_all_declared_track_configs() {
+            return Ok(());
+        }
+
+        let pending_samples = std::mem::take(&mut self.pending_samples_before_initialization);
+        self.pending_samples_before_initialization_bytes = 0;
+        for sample in pending_samples {
+            match sample.kind() {
+                MediaKind::Video => {
+                    let clock = self
+                        .video_config
+                        .as_ref()
+                        .ok_or_else(|| {
+                            CoreError::new(
+                                CoreErrorCode::InvalidCodecConfig,
+                                "Cannot mux queued video without video configuration.",
+                            )
+                        })?
+                        .clock;
+                    self.push_initialized_video(sample, clock, out);
+                }
+                MediaKind::Audio => {
+                    let clock = self
+                        .audio_config
+                        .as_ref()
+                        .ok_or_else(|| {
+                            CoreError::new(
+                                CoreErrorCode::InvalidCodecConfig,
+                                "Cannot mux queued audio without audio configuration.",
+                            )
+                        })?
+                        .clock;
+                    self.push_initialized_audio(sample, clock, out);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -148,6 +248,21 @@ impl Fmp4Muxer {
         }
         let clock = audio_config.clock;
 
+        if !self.has_all_declared_track_configs() {
+            self.queue_sample_before_initialization(sample)?;
+            return Ok(());
+        }
+
+        self.push_initialized_audio(sample, clock, out);
+        Ok(())
+    }
+
+    fn push_initialized_audio(
+        &mut self,
+        sample: EncodedSample,
+        clock: crate::track::TrackClock,
+        out: &mut Vec<CoreEvent>,
+    ) {
         self.ensure_audio_init_segment(out);
         let sequence_number = self.next_audio_sequence_number;
         self.next_audio_sequence_number = self.next_audio_sequence_number.saturating_add(1);
@@ -163,23 +278,33 @@ impl Fmp4Muxer {
             keyframe: sample.is_sync(),
             bytes,
         }));
-        Ok(())
     }
 
     fn ensure_video_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
-        if self.video_init_emitted {
-            return;
-        }
-
-        self.emit_video_init_segment(out);
+        self.emit_initial_segment_if_ready(out);
     }
 
     fn ensure_audio_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
-        if self.audio_init_emitted {
+        self.emit_initial_segment_if_ready(out);
+    }
+
+    fn has_all_declared_track_configs(&self) -> bool {
+        (!self.expects_video || self.video_config.is_some())
+            && (!self.expects_audio || self.audio_config.is_some())
+    }
+
+    fn emit_initial_segment_if_ready(&mut self, out: &mut Vec<CoreEvent>) {
+        if self.init_segment_mode != InitSegmentMode::None || !self.has_all_declared_track_configs()
+        {
             return;
         }
 
-        self.emit_audio_init_segment(out);
+        match (&self.video_config, &self.audio_config) {
+            (Some(_), Some(_)) => self.emit_muxed_init_segment(out),
+            (Some(_), None) => self.emit_video_init_segment(out),
+            (None, Some(_)) => self.emit_audio_init_segment(out),
+            (None, None) => {}
+        }
     }
 
     fn emit_video_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
@@ -193,7 +318,7 @@ impl Fmp4Muxer {
             timescale: video_timescale(config),
             bytes: build_video_init_segment(config),
         }));
-        self.video_init_emitted = true;
+        self.init_segment_mode = InitSegmentMode::Video;
     }
 
     fn emit_audio_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
@@ -207,7 +332,26 @@ impl Fmp4Muxer {
             timescale: audio_timescale(config),
             bytes: build_audio_init_segment(config),
         }));
-        self.audio_init_emitted = true;
+        self.init_segment_mode = InitSegmentMode::Audio;
+    }
+
+    fn emit_muxed_init_segment(&mut self, out: &mut Vec<CoreEvent>) {
+        let (Some(video_config), Some(audio_config)) = (&self.video_config, &self.audio_config)
+        else {
+            return;
+        };
+
+        out.push(CoreEvent::InitSegment(InitSegment {
+            track: TrackKind::Muxed,
+            codec: format!(
+                "{}, {}",
+                Fmp4VideoCodec::codec_string(&video_config.codec),
+                Fmp4AudioCodec::codec_string(&audio_config.codec)
+            ),
+            timescale: video_timescale(video_config),
+            bytes: build_muxed_init_segment(video_config, audio_config),
+        }));
+        self.init_segment_mode = InitSegmentMode::Muxed;
     }
 
     fn emit_video_media_segment(
@@ -236,6 +380,12 @@ impl Fmp4Muxer {
     }
 
     pub(crate) fn flush(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
+        if !self.pending_samples_before_initialization.is_empty() {
+            return Err(CoreError::new(
+                CoreErrorCode::InvalidCodecConfig,
+                "FLV input ended before all declared tracks provided their configuration.",
+            ));
+        }
         if let Some(sample) = self.pending_video_sample.take() {
             let clock = self
                 .video_config
@@ -255,6 +405,15 @@ impl Fmp4Muxer {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum InitSegmentMode {
+    #[default]
+    None,
+    Video,
+    Audio,
+    Muxed,
 }
 
 fn infer_video_sample_duration(

@@ -94,6 +94,36 @@ describe('Rivmux browser runtime', () => {
     }
   })
 
+  it('keeps one SourceBuffer when AAC configuration arrives after video samples', async () => {
+    await resetTestStreams()
+
+    const video = createVideo()
+    const player = createPlayer('m5-late-aac-config', {
+      autoPlay: false,
+      fixture: 'h264-aac-late-config',
+    })
+    const errors: unknown[] = []
+    const stats: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+    player.on('stats', (entry) => stats.push(entry))
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitForCoreSignal(errors, () => stats.some((entry) => isNumberFieldAtLeast(entry, 'outputBytes', 1)))
+      expect(errors).toStrictEqual([])
+      expect(stats).toContainEqual(
+        expect.objectContaining({
+          sourceBufferCount: 1,
+        })
+      )
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
+
   it('starts two independent instances and closes both HTTP-FLV streams', async () => {
     await resetTestStreams()
 
