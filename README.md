@@ -35,7 +35,7 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 - Release publishing is gated by the same real Chromium playback suite.
 - The first-release support contract is HTTP-FLV with H.264/AVC video and optional AAC-LC audio. HEVC, AV1, and Opus paths are experimental internal work and are not public support claims.
 - Rust/TypeScript file structure stays compact for M1. Split demuxer/muxer traits and codec subdirectories when MPEG-TS, HEVC, AV1, or additional muxer outputs make the current files too large.
-- `packages/protocol/src/index.ts` stays single-file for M1. Split into public types, internal messages, media types, and error codes when the protocol surface grows further.
+- `packages/protocol/src` is split by public options, media state, diagnostics/errors, events, and worker messages; `index.ts` remains the stable package entry point.
 
 ## Workspace Commands
 
