@@ -417,6 +417,7 @@ function createMockVideo(): HTMLVideoElement {
   return video as unknown as HTMLVideoElement
 }
 
-function flushPromises(): Promise<void> {
-  return Promise.resolve()
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
 }
