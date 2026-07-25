@@ -2,6 +2,11 @@
 
 Rust transmux core for Rivmux container parsing and fragmented MP4 generation.
 
+The public first-release contract remains HTTP-FLV with H.264/AVC and optional
+AAC-LC. HEVC, AV1, and Opus implementations in this private core are
+experimental/internal until each codec has repository-owned playable fixtures,
+Chromium acceptance coverage, and an explicit public support decision.
+
 ## 内部媒体契约
 
 - 解复用器必须先发出 `TrackConfig`，再发出属于该轨道的 `EncodedSample`。

@@ -14,10 +14,10 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 
 ## Crates
 
-| Crate                      | 目录                                                     | 说明                               |
-| -------------------------- | -------------------------------------------------------- | ---------------------------------- |
-| `rivmux_transmux_core`     | [`crates/transmux-core`](./crates/transmux-core)         | Rust transmux core crate.          |
-| `rivmux_transmux_fixtures` | [`crates/transmux-fixtures`](./crates/transmux-fixtures) | Reserved fixture generation crate. |
+| Crate                      | 目录                                                     | 说明                                  |
+| -------------------------- | -------------------------------------------------------- | ------------------------------------- |
+| `rivmux_transmux_core`     | [`crates/transmux-core`](./crates/transmux-core)         | Rust transmux core crate.             |
+| `rivmux_transmux_fixtures` | [`crates/transmux-fixtures`](./crates/transmux-fixtures) | Repository-owned media fixture crate. |
 
 ## Development
 
@@ -31,8 +31,9 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 
 ## Validation Notes
 
-- CI runs package tests and Rust tests through `pnpm run test:ci`.
-- Browser tests are local and release-before-cut validation items for now because installing Playwright browsers is slow and can stall CI. Future options are a separate workflow, manual trigger, browser cache, or nightly run.
+- CI runs package and Rust tests through `pnpm run test:ci`, plus a dedicated Chromium job through `pnpm run test:browser`.
+- Release publishing is gated by the same real Chromium playback suite.
+- The first-release support contract is HTTP-FLV with H.264/AVC video and optional AAC-LC audio. HEVC, AV1, and Opus paths are experimental internal work and are not public support claims.
 - Rust/TypeScript file structure stays compact for M1. Split demuxer/muxer traits and codec subdirectories when MPEG-TS, HEVC, AV1, or additional muxer outputs make the current files too large.
 - `packages/protocol/src/index.ts` stays single-file for M1. Split into public types, internal messages, media types, and error codes when the protocol surface grows further.
 
@@ -42,6 +43,7 @@ Rivmux 是一个 Node packages + Cargo crates 混合仓库，当前骨架聚焦 
 pnpm run typecheck
 pnpm run clippy
 pnpm run test
+pnpm run test:browser
 pnpm run build
 pnpm run build:release
 pnpm run build:playground

@@ -8,6 +8,10 @@ browser `<video>` element.
 
 M1 supports only the dedicated-worker MSE runtime path. Main-thread MSE is not available.
 
+The first-release support contract is HTTP-FLV with H.264/AVC video and optional
+AAC-LC audio. MPEG-TS is roadmap work. Existing HEVC, AV1, and Opus core paths
+are experimental internals and are not supported public inputs.
+
 ## Install
 
 ```sh
