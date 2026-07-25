@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { createM1StaticFmp4Fixture } from '../../fixtures/m1-static-fmp4'
 
 import type { Plugin } from 'vitest/config'
@@ -65,9 +67,11 @@ export function createBrowserTestServer(): Plugin {
         })
 
         const fixture = url.searchParams.get('fixture')
-        const isCoreFixture = fixture === 'h264' || fixture === 'h264-aac' || fixture === 'h264-aac-late-config' || fixture === 'opus'
-        const chunk =
-          fixture === 'h264'
+        const isPlayableFixture = fixture === 'h264-aac-playable'
+        const isCoreFixture = isPlayableFixture || fixture === 'h264' || fixture === 'h264-aac' || fixture === 'h264-aac-late-config' || fixture === 'opus'
+        const chunk = isPlayableFixture
+          ? H264_AAC_PLAYABLE_FLV
+          : fixture === 'h264'
             ? createCoreH264FlvFixture()
             : fixture === 'h264-aac'
               ? createCoreH264AacFlvFixture()
@@ -89,11 +93,23 @@ export function createBrowserTestServer(): Plugin {
         const stallMs = parsePositiveInteger(url.searchParams.get('stallMs'))
         const splitAt = Math.max(1, Math.min(chunk.byteLength - 1, Math.floor(chunk.byteLength / 2)))
         let stalledWriteTimer: ReturnType<typeof setTimeout> | undefined
+        let playableWriteTimer: ReturnType<typeof setInterval> | undefined
         if (isCoreFixture && stallMs !== undefined && chunk.byteLength > 1) {
           writeChunk(chunk.slice(0, splitAt))
           stalledWriteTimer = setTimeout(() => {
             writeChunk(chunk.slice(splitAt))
           }, stallMs)
+        } else if (isPlayableFixture) {
+          let offset = 0
+          playableWriteTimer = setInterval(() => {
+            const end = Math.min(offset + 16 * 1024, chunk.byteLength)
+            writeChunk(chunk.slice(offset, end))
+            offset = end
+            if (offset >= chunk.byteLength && playableWriteTimer !== undefined) {
+              clearInterval(playableWriteTimer)
+              playableWriteTimer = undefined
+            }
+          }, 10)
         } else {
           writeChunk(chunk)
         }
@@ -101,6 +117,9 @@ export function createBrowserTestServer(): Plugin {
         request.on('close', () => {
           if (stalledWriteTimer !== undefined) {
             clearTimeout(stalledWriteTimer)
+          }
+          if (playableWriteTimer !== undefined) {
+            clearInterval(playableWriteTimer)
           }
           if (interval !== undefined) {
             clearInterval(interval)
@@ -112,6 +131,8 @@ export function createBrowserTestServer(): Plugin {
     },
   }
 }
+
+const H264_AAC_PLAYABLE_FLV = new Uint8Array(readFileSync(new URL('../../../crates/transmux-fixtures/fixtures/h264-aac.flv', import.meta.url)))
 
 function getStreamState(streamStates: Map<string, StreamState>, id: string): StreamState {
   const existing = streamStates.get(id)

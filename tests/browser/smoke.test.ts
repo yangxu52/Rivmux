@@ -19,8 +19,7 @@ describe('Rivmux browser runtime', () => {
 
     const video = createVideo()
     const player = createPlayer('m5-default-wasm', {
-      autoPlay: false,
-      fixture: 'h264-aac',
+      fixture: 'h264-aac-playable',
     })
     const errors: unknown[] = []
     const mediaInfo: unknown[] = []
@@ -28,6 +27,14 @@ describe('Rivmux browser runtime', () => {
     player.on('error', (error) => errors.push(error))
     player.on('mediaInfo', (info) => mediaInfo.push(info))
     player.on('stats', (entry) => stats.push(entry))
+    let canPlay = false
+    video.addEventListener(
+      'canplay',
+      () => {
+        canPlay = true
+      },
+      { once: true }
+    )
 
     try {
       await player.attach(video)
@@ -37,6 +44,8 @@ describe('Rivmux browser runtime', () => {
         mediaInfo.some((info) => isRecord(info) && info.container === 'flv' && info.videoCodec === 'avc1.42C01E' && info.audioCodec === 'mp4a.40.2')
       )
       await waitForCoreSignal(errors, () => stats.some((entry) => isRecord(entry) && typeof entry.outputBytes === 'number' && entry.outputBytes > 0))
+      await waitForCoreSignal(errors, () => canPlay)
+      await waitForPlayback(errors, video)
       expect(errors).toStrictEqual([])
       expect(mediaInfo).toContainEqual(
         expect.objectContaining({
@@ -52,6 +61,8 @@ describe('Rivmux browser runtime', () => {
           outputBytes: expect.any(Number),
         })
       )
+      expect(video.readyState).toBeGreaterThanOrEqual(HTMLMediaElement.HAVE_FUTURE_DATA)
+      expect(video.currentTime).toBeGreaterThanOrEqual(0.25)
     } finally {
       await player.destroy()
       video.remove()
@@ -124,29 +135,66 @@ describe('Rivmux browser runtime', () => {
     }
   })
 
-  it('starts two independent instances and closes both HTTP-FLV streams', async () => {
+  it('plays two independent instances and keeps one advancing after destroying the other', async () => {
     await resetTestStreams()
 
     const firstVideo = createVideo()
     const secondVideo = createVideo()
-    const firstPlayer = createPlayer('m2-first', { fixture: 'h264' })
-    const secondPlayer = createPlayer('m2-second', { fixture: 'h264' })
+    const firstPlayer = createPlayer('m2-first', { fixture: 'h264-aac-playable' })
+    const secondPlayer = createPlayer('m2-second', { fixture: 'h264-aac-playable' })
+    const errors: unknown[] = []
+    firstPlayer.on('error', (error) => errors.push(error))
+    secondPlayer.on('error', (error) => errors.push(error))
 
     try {
       await Promise.all([firstPlayer.attach(firstVideo), secondPlayer.attach(secondVideo)])
       await Promise.all([firstPlayer.start(), secondPlayer.start()])
 
       await waitForStreamState(['m2-first', 'm2-second'], (stats) => stats.every((state) => state.opened === 1 && state.active && state.chunks > 0))
+      await Promise.all([waitForPlayback(errors, firstVideo), waitForPlayback(errors, secondVideo)])
 
-      await firstPlayer.stop()
-      await secondPlayer.destroy()
+      await firstPlayer.destroy()
+      const secondTime = secondVideo.currentTime
+      await waitForPlayback(errors, secondVideo, secondTime)
 
-      await waitForStreamState(['m2-first', 'm2-second'], (stats) => stats.every((state) => state.closed === 1 && !state.active))
+      await waitForStreamState(['m2-first', 'm2-second'], ([first, second]) => first?.closed === 1 && !first.active && second?.opened === 1 && second.active)
+      expect(errors).toStrictEqual([])
     } finally {
       await firstPlayer.destroy()
       await secondPlayer.destroy()
       firstVideo.remove()
       secondVideo.remove()
+    }
+  })
+
+  it('stops and restarts the same player with a fresh playable HTTP-FLV stream', async () => {
+    await resetTestStreams()
+
+    const video = createVideo()
+    const player = createPlayer('m2-restart', { fixture: 'h264-aac-playable' })
+    const errors: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+
+    try {
+      await player.attach(video)
+      await player.start()
+      await waitForPlayback(errors, video)
+
+      await player.stop()
+      await waitForStreamState(['m2-restart'], ([state]) => state?.opened === 1 && state.closed === 1 && !state.active)
+      expect(video.srcObject).toBeNull()
+
+      await player.start()
+      await waitForStreamState(['m2-restart'], ([state]) => state?.opened === 2 && state.active)
+      const restartTime = video.currentTime
+      await waitForPlayback(errors, video, restartTime)
+
+      await player.destroy()
+      await waitForStreamState(['m2-restart'], ([state]) => state?.opened === 2 && state.closed === 2 && !state.active)
+      expect(errors).toStrictEqual([])
+    } finally {
+      await player.destroy()
+      video.remove()
     }
   })
 
@@ -326,6 +374,10 @@ async function waitForCoreSignal(errors: unknown[], predicate: () => boolean | P
 
     return predicate()
   })
+}
+
+async function waitForPlayback(errors: unknown[], video: HTMLVideoElement, initialTime = 0): Promise<void> {
+  await waitForCoreSignal(errors, () => video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && !video.paused && video.currentTime >= initialTime + 0.25)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

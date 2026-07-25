@@ -1,5 +1,12 @@
+use rivmux_transmux_fixtures::{H264_AAC_FLV, H264_AAC_FLV_SHA256};
+use sha2::{Digest, Sha256};
+
 #[test]
-#[ignore = "reserved until deterministic transmux fixture generation lands"]
-fn fixture_generation_is_reserved() {
-    assert_eq!(env!("CARGO_PKG_NAME"), "rivmux_transmux_fixtures");
+fn h264_aac_fixture_matches_recorded_integrity() {
+    assert_eq!(H264_AAC_FLV.len(), 222_370);
+    assert_eq!(&H264_AAC_FLV[..3], b"FLV");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(H264_AAC_FLV)),
+        H264_AAC_FLV_SHA256
+    );
 }

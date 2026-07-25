@@ -10,3 +10,6 @@ readme = "README.md"
 path = "src/lib.rs"
 
 [dependencies]
+
+[dev-dependencies]
+sha2 = "0.10"
