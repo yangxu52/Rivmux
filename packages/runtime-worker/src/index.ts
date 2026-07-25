@@ -36,8 +36,7 @@ export class WorkerClient {
   }
   private readonly handleError = (event: ErrorEvent): void => {
     const error = createRuntimeWorkerError('RIVMUX_WORKER_ERROR', event.message || 'Worker runtime failed.', true, event.error)
-    this.rejectAll(error)
-    this.hooks.onError(error)
+    this.failClient(error)
   }
   private pendingAttach?: PendingRequest
   private pendingStop?: PendingRequest
@@ -121,12 +120,15 @@ export class WorkerClient {
     }
 
     if (message.type === 'stopped') {
+      this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by stop.', false))
       this.resolveStop()
       return
     }
 
     if (message.type === 'destroyed') {
       this.resolveDestroy()
+      this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by destroy.', false))
+      this.rejectStop(createRuntimeWorkerError('RIVMUX_STOP_CANCELLED', 'Stop was superseded by destroy.', false))
       return
     }
 
@@ -161,6 +163,18 @@ export class WorkerClient {
     this.pendingDestroy = undefined
   }
 
+  private rejectAttach(error: PlayerError): void {
+    this.clearAttachTimer()
+    this.pendingAttach?.reject(error)
+    this.pendingAttach = undefined
+  }
+
+  private rejectStop(error: PlayerError): void {
+    this.clearStoppedTimer()
+    this.pendingStop?.reject(error)
+    this.pendingStop = undefined
+  }
+
   private rejectAll(error: PlayerError): void {
     this.queuedCommands = []
     this.clearAttachTimer()
@@ -191,8 +205,13 @@ export class WorkerClient {
     return setTimeout(() => {
       const error = createRuntimeWorkerError(code, message, true)
       reject(error)
-      this.rejectAll(error)
+      this.failClient(error)
     }, REQUEST_TIMEOUT_MS)
+  }
+
+  private failClient(error: PlayerError): void {
+    this.rejectAll(error)
+    this.hooks.onError(error)
   }
 
   private clearAttachTimer(): void {

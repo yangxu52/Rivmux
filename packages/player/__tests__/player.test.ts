@@ -148,6 +148,208 @@ describe('RivmuxPlayer', () => {
 
     await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYED' })
   })
+
+  it('enters a terminal state after a fatal worker error without waiting for stop', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const errors = vi.fn()
+    player.on('error', errors)
+
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
+    await player.start()
+
+    worker.emit({
+      type: 'error',
+      error: {
+        kind: 'network',
+        code: 'RIVMUX_HTTP_STATUS',
+        message: 'HTTP Fetch loader failed.',
+        terminal: true,
+      },
+    })
+
+    expect(errors).toHaveBeenCalledOnce()
+    expect(video.srcObject).toBeNull()
+    expect(video.load).toHaveBeenCalledOnce()
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_HTTP_STATUS', message: 'HTTP Fetch loader failed.' })
+
+    const commandCount = worker.commands.length
+    await player.stop()
+    expect(worker.commands).toHaveLength(commandCount)
+
+    const destroyPromise = player.destroy()
+    expect(worker.commands.at(-1)).toStrictEqual({ type: 'destroy' })
+    worker.emit({ type: 'destroyed' })
+    await destroyPromise
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('finishes local destroy cleanup when the worker fails before acknowledging destroy', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
+
+    const destroyPromise = player.destroy()
+    worker.emitError('Worker crashed during destroy.')
+    await expect(destroyPromise).rejects.toMatchObject({ code: 'RIVMUX_WORKER_ERROR' })
+
+    expect(worker.terminated).toBe(true)
+    expect(video.srcObject).toBeNull()
+    expect(video.load).toHaveBeenCalledOnce()
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYED' })
+    await expect(player.destroy()).resolves.toBeUndefined()
+  })
+
+  it('prevents resource revival while destroy is waiting for the worker', async () => {
+    const worker = new MockWorker()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const video = createMockVideo()
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
+
+    const firstDestroy = player.destroy()
+    const secondDestroy = player.destroy()
+    await expect(player.attach(video)).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    await expect(player.stop()).resolves.toBeUndefined()
+    expect(worker.commands.filter((command) => command.type === 'destroy')).toHaveLength(1)
+
+    worker.emit({ type: 'destroyed' })
+    await Promise.all([firstDestroy, secondDestroy])
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('does not let a resolved attach overwrite destroying before its continuation runs', async () => {
+    const worker = new MockWorker()
+    const workerFactory = vi.fn(() => worker)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory,
+      detectRuntime: () => undefined,
+    })
+    const video = createMockVideo()
+
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    const destroyPromise = player.destroy()
+    await attachPromise
+
+    await expect(player.attach(video)).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    expect(workerFactory).toHaveBeenCalledOnce()
+
+    worker.emit({ type: 'destroyed' })
+    await destroyPromise
+  })
+
+  it('does not let a resolved stop overwrite destroying before its continuation runs', async () => {
+    const worker = new MockWorker()
+    const workerFactory = vi.fn(() => worker)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory,
+      detectRuntime: () => undefined,
+    })
+    const video = createMockVideo()
+
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
+    await player.start()
+
+    const stopPromise = player.stop()
+    worker.emit({ type: 'stopped' })
+    const destroyPromise = player.destroy()
+    await stopPromise
+
+    await expect(player.attach(video)).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_DESTROYING' })
+    expect(workerFactory).toHaveBeenCalledOnce()
+
+    worker.emit({ type: 'destroyed' })
+    await destroyPromise
+  })
+
+  it('preserves a terminal error when attach resolves in the same task', async () => {
+    const worker = new MockWorker()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const terminalError = {
+      kind: 'network' as const,
+      code: 'RIVMUX_HTTP_STATUS',
+      message: 'HTTP Fetch loader failed.',
+      terminal: true,
+    }
+
+    const attachPromise = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    worker.emit({ type: 'error', error: terminalError })
+    await attachPromise
+
+    await expect(player.start()).rejects.toMatchObject({ name: terminalError.code, message: terminalError.message })
+  })
+
+  it('cancels a pending restart when stop begins after the attach acknowledgement', async () => {
+    const worker = new MockWorker()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const video = createMockVideo()
+
+    const attachPromise = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attachPromise
+    await player.start()
+    const initialStop = player.stop()
+    worker.emit({ type: 'stopped' })
+    await initialStop
+
+    const restart = player.start()
+    worker.emit({ type: 'media-source-handle', handle: { id: 'restart' } as unknown as MediaSourceHandle })
+    const stop = player.stop()
+    const repeatedStop = player.stop()
+    await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_STOPPING' })
+    await expect(player.attach(video)).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_STOPPING' })
+    await restart
+    expect(worker.commands.slice(-2).map((command) => command.type)).toStrictEqual(['attach-media-source', 'stop'])
+
+    worker.emit({ type: 'stopped' })
+    await Promise.all([stop, repeatedStop])
+
+    const nextRestart = player.start()
+    worker.emit({ type: 'media-source-handle', handle: { id: 'next-restart' } as unknown as MediaSourceHandle })
+    await nextRestart
+    expect(worker.commands.at(-2)?.type).toBe('start')
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
 })
 
 class MockWorker implements WorkerLike {

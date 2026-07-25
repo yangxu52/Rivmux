@@ -13,6 +13,10 @@ import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, Wor
 import type { CoreEvent, TransmuxCoreHost } from './wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
+type LifecycleCommandContext = {
+  generation: number
+  signal: AbortSignal
+}
 type RuntimeMseCleanupOptions = {
   force?: boolean
 }
@@ -72,6 +76,11 @@ export class RuntimeWorker {
   private fmp4AppendBatcher?: Fmp4AppendBatcher
   private fmp4AppendGeneration = 0
   private fmp4AppendTail: Promise<boolean> = Promise.resolve(true)
+  private commandTail: Promise<void> = Promise.resolve()
+  private lifecycleGeneration = 0
+  private lifecycleAbortController = new AbortController()
+  private loaderClosePromise?: Promise<void>
+  private fatalCleanupPromise: Promise<void> = Promise.resolve()
 
   constructor(port: RuntimeWorkerPort, dependencies: RuntimeWorkerDependencies = {}) {
     this.port = port
@@ -82,13 +91,38 @@ export class RuntimeWorker {
     this.now = dependencies.now ?? (() => performance.now())
   }
 
-  async handleCommand(command: WorkerCommand): Promise<void> {
+  handleCommand(command: WorkerCommand): Promise<void> {
+    if (command.type === 'stop' || command.type === 'destroy') {
+      this.lifecycleGeneration += 1
+      this.lifecycleAbortController.abort()
+      this.lifecycleAbortController = new AbortController()
+    }
+
+    const context = {
+      generation: this.lifecycleGeneration,
+      signal: this.lifecycleAbortController.signal,
+    }
+    const handling = this.commandTail.then(() => this.executeCommand(command, context))
+    this.commandTail = handling.catch(() => undefined)
+    return handling
+  }
+
+  private async executeCommand(command: WorkerCommand, context: LifecycleCommandContext): Promise<void> {
     if (this.state === 'destroyed') {
       return
     }
 
-    if (this.state === 'fatal-error' && command.type !== 'destroy') {
+    if ((command.type === 'attach-media-source' || command.type === 'start') && !this.isLifecycleContextCurrent(context)) {
       return
+    }
+
+    if (this.state === 'fatal-error') {
+      if (command.type === 'stop') {
+        this.post({ type: 'stopped' })
+      }
+      if (command.type !== 'destroy') {
+        return
+      }
     }
 
     try {
@@ -108,10 +142,10 @@ export class RuntimeWorker {
           this.post({ type: 'ready' })
           return
         case 'attach-media-source':
-          await this.attachMediaSource()
+          await this.attachMediaSource(context)
           return
         case 'start':
-          await this.start()
+          await this.start(context)
           return
         case 'stop':
           await this.stop()
@@ -124,8 +158,12 @@ export class RuntimeWorker {
           return
         case 'video-state':
           this.videoState = command.state
-          await this.applyLatencyPolicy()
-          this.postStats()
+          {
+            const policy = await raceLifecycleOperation(this.applyLatencyPolicy(context), context.signal)
+            if (!policy.cancelled && this.isLifecycleContextCurrent(context) && this.state === 'started') {
+              this.postStats()
+            }
+          }
           return
         case 'playback-control-result':
           this.latencyController?.recordPlaybackControlResult(command.result)
@@ -139,7 +177,7 @@ export class RuntimeWorker {
     }
   }
 
-  private async attachMediaSource(): Promise<void> {
+  private async attachMediaSource(context: LifecycleCommandContext): Promise<void> {
     if (this.state === 'idle') {
       this.fail('runtime', 'RIVMUX_WORKER_NOT_INITIALIZED', 'Worker must be initialized before attach.', true)
       return
@@ -150,15 +188,22 @@ export class RuntimeWorker {
     }
 
     try {
-      const handle = await this.mse.createMediaSourceHandle()
+      const attachment = await raceLifecycleOperation(this.mse.createMediaSourceHandle(), context.signal)
+      if (attachment.cancelled || context.generation !== this.lifecycleGeneration) {
+        return
+      }
+      const handle = attachment.value
       this.post({ type: 'media-source-handle', handle }, [handle])
       this.state = 'attached'
     } catch (cause) {
+      if (context.generation !== this.lifecycleGeneration) {
+        return
+      }
       this.fail('mse', 'RIVMUX_MSE_ATTACH_FAILED', 'MSE media source attachment failed.', true, cause)
     }
   }
 
-  private async start(): Promise<void> {
+  private async start(context: LifecycleCommandContext): Promise<void> {
     const options = this.options
     if (this.mse === undefined || options === undefined || this.state === 'idle' || this.state === 'ready') {
       this.fail('runtime', 'RIVMUX_WORKER_START_REQUIRES_ATTACH', 'Worker start requires an attached MediaSource.', true)
@@ -171,28 +216,39 @@ export class RuntimeWorker {
 
     let transmuxCore: TransmuxCoreHost
     try {
-      const createdCore = await this.createTransmuxCore(options)
+      const creationPromise = Promise.resolve(this.createTransmuxCore(options))
+      const creation = await raceLifecycleOperation(creationPromise, context.signal, (lateCore) => lateCore?.destroy())
+      if (creation.cancelled || context.generation !== this.lifecycleGeneration) {
+        return
+      }
+      const createdCore = creation.value
       if (createdCore === undefined) {
         this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available.', true)
         return
       }
       transmuxCore = createdCore
     } catch (cause) {
+      if (context.generation !== this.lifecycleGeneration) {
+        return
+      }
       this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available.', true, cause)
       return
     }
 
     this.transmuxCore?.destroy()
     this.transmuxCore = transmuxCore
-    this.startFmp4AppendBatcher()
+    this.startFmp4AppendBatcher(context)
     this.state = 'started'
     this.outputBytes = 0
     this.appendQueueMaxLength = 0
     this.appendQueueMaxBytes = 0
+    const initialPolicy = await raceLifecycleOperation(this.applyLatencyPolicy(context), context.signal)
+    if (initialPolicy.cancelled || !this.isLifecycleContextCurrent(context)) {
+      return
+    }
     this.startStatsTimer()
-    await this.applyLatencyPolicy()
     this.postStats()
-    this.startLoader()
+    this.startLoader(context)
   }
 
   private async stop(): Promise<void> {
@@ -207,6 +263,7 @@ export class RuntimeWorker {
   }
 
   private async destroy(): Promise<void> {
+    await this.fatalCleanupPromise
     await this.closeLoader()
     this.mse?.destroy()
     this.mse = undefined
@@ -218,7 +275,7 @@ export class RuntimeWorker {
     this.port.close()
   }
 
-  private startLoader(): void {
+  private startLoader(context: LifecycleCommandContext): void {
     const options = this.options
     const url = this.url
     if (options === undefined || url === undefined) {
@@ -234,31 +291,37 @@ export class RuntimeWorker {
     this.loaderRunId = runId
     this.loader = loader
 
-    void this.runLoader(loader, runId)
+    void this.runLoader(loader, runId, context)
   }
 
-  private async runLoader(loader: StreamLoader, runId: number): Promise<void> {
+  private async runLoader(loader: StreamLoader, runId: number, context: LifecycleCommandContext): Promise<void> {
     try {
       await loader.open()
 
-      while (this.isCurrentLoader(loader, runId)) {
-        await this.applyLatencyPolicy()
+      while (this.isCurrentLoader(loader, runId) && this.isLifecycleContextCurrent(context)) {
+        await this.applyLatencyPolicy(context)
+        if (!this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
+          return
+        }
         const chunk = await loader.read()
-        if (chunk === null) {
+        if (chunk === null || !this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
           break
         }
 
         this.postStats(loader.stats)
-        if (!(await this.processTransmuxEvents(this.transmuxCore?.pushChunk(chunk.bytes) ?? []))) {
+        if (!(await this.processTransmuxEvents(this.transmuxCore?.pushChunk(chunk.bytes) ?? [], context))) {
           await this.closeCurrentLoader(loader, runId)
           return
         }
-        await this.applyLatencyPolicy()
+        await this.applyLatencyPolicy(context)
+        if (!this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
+          return
+        }
         this.postStats(loader.stats)
       }
 
-      if (this.isCurrentLoader(loader, runId)) {
-        if (!(await this.flushFmp4AppendBatches())) {
+      if (this.isCurrentLoader(loader, runId) && this.isLifecycleContextCurrent(context)) {
+        if (!(await this.flushFmp4AppendBatches(context))) {
           return
         }
         this.postStats(loader.stats)
@@ -281,16 +344,25 @@ export class RuntimeWorker {
   private async closeLoader(): Promise<void> {
     this.stopStatsTimer()
     this.discardFmp4AppendBatches()
+    this.transmuxCore?.destroy()
+    this.transmuxCore = undefined
     const loader = this.loader
     if (loader === undefined) {
+      await this.loaderClosePromise
       return
     }
 
     this.loader = undefined
     this.loaderRunId += 1
-    this.transmuxCore?.destroy()
-    this.transmuxCore = undefined
-    await loader.close()
+    const closing = loader.close()
+    this.loaderClosePromise = closing
+    try {
+      await closing
+    } finally {
+      if (this.loaderClosePromise === closing) {
+        this.loaderClosePromise = undefined
+      }
+    }
   }
 
   private async closeCurrentLoader(loader: StreamLoader, runId: number): Promise<void> {
@@ -342,8 +414,11 @@ export class RuntimeWorker {
     })
   }
 
-  private async processTransmuxEvents(events: CoreEvent[]): Promise<boolean> {
+  private async processTransmuxEvents(events: CoreEvent[], context: LifecycleCommandContext): Promise<boolean> {
     for (const event of events) {
+      if (!this.isLifecycleContextCurrent(context)) {
+        return false
+      }
       switch (event.type) {
         case 'mediaInfo':
           this.post({ type: 'media-info', mediaInfo: coreMediaInfoToPlayerMediaInfo(event.data) })
@@ -355,19 +430,22 @@ export class RuntimeWorker {
           this.failWithError(coreErrorToPlayerError(event.data))
           return false
         case 'initSegment':
-          if (!(await this.flushFmp4AppendBatches())) {
+          if (!(await this.flushFmp4AppendBatches(context))) {
             return false
           }
-          if (!(await this.appendToMse(() => this.mse?.appendInitSegment(event.data)))) {
+          if (!(await this.appendToMse(context, () => this.mse?.appendInitSegment(event.data)))) {
+            return false
+          }
+          if (!this.isLifecycleContextCurrent(context)) {
             return false
           }
           this.outputBytes += event.data.bytes.byteLength
-          await this.applyLatencyPolicy()
+          await this.applyLatencyPolicy(context)
           break
         case 'mediaSegment':
           {
             const batch = this.fmp4AppendBatcher?.push(event.data)
-            if (batch !== undefined && !(await this.enqueueFmp4AppendBatch(batch))) {
+            if (batch !== undefined && !(await this.enqueueFmp4AppendBatch(batch, context))) {
               return false
             }
           }
@@ -384,18 +462,21 @@ export class RuntimeWorker {
     return this.fmp4AppendTail
   }
 
-  private startFmp4AppendBatcher(): void {
+  private startFmp4AppendBatcher(context: LifecycleCommandContext): void {
     this.discardFmp4AppendBatches()
     this.fmp4AppendTail = Promise.resolve(true)
     this.fmp4AppendBatcher = new Fmp4AppendBatcher((track) => {
       const batch = this.fmp4AppendBatcher?.flush(track)
       if (batch !== undefined) {
-        void this.enqueueFmp4AppendBatch(batch)
+        void this.enqueueFmp4AppendBatch(batch, context)
       }
     })
   }
 
-  private async flushFmp4AppendBatches(track?: Extract<CoreEvent, { type: 'mediaSegment' }>['data']['track']): Promise<boolean> {
+  private async flushFmp4AppendBatches(
+    context: LifecycleCommandContext,
+    track?: Extract<CoreEvent, { type: 'mediaSegment' }>['data']['track']
+  ): Promise<boolean> {
     const batcher = this.fmp4AppendBatcher
     if (batcher === undefined) {
       return true
@@ -403,30 +484,35 @@ export class RuntimeWorker {
 
     const batches = track === undefined ? batcher.flushAll() : [batcher.flush(track)].filter((batch): batch is NonNullable<typeof batch> => batch !== undefined)
     for (const batch of batches) {
-      if (!(await this.enqueueFmp4AppendBatch(batch))) {
+      if (!(await this.enqueueFmp4AppendBatch(batch, context))) {
         return false
       }
     }
     return true
   }
 
-  private enqueueFmp4AppendBatch(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<boolean> {
+  private enqueueFmp4AppendBatch(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data'], context: LifecycleCommandContext): Promise<boolean> {
     const generation = this.fmp4AppendGeneration
     const append = this.fmp4AppendTail.then(async (previousAppendSucceeded) => {
-      if (!previousAppendSucceeded || generation !== this.fmp4AppendGeneration || this.state !== 'started') {
+      if (!previousAppendSucceeded || generation !== this.fmp4AppendGeneration || this.state !== 'started' || !this.isLifecycleContextCurrent(context)) {
         return false
       }
 
-      if (!(await this.appendToMse(() => this.mse?.appendMediaSegment(segment)))) {
+      if (!(await this.appendToMse(context, () => this.mse?.appendMediaSegment(segment)))) {
         return false
       }
 
+      if (!this.isLifecycleContextCurrent(context)) {
+        return false
+      }
       this.outputBytes += segment.bytes.byteLength
-      await this.applyLatencyPolicy()
+      await this.applyLatencyPolicy(context)
       return true
     })
     this.fmp4AppendTail = append.catch((cause) => {
-      this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+      if (this.isLifecycleContextCurrent(context)) {
+        this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+      }
       return false
     })
     return this.fmp4AppendTail
@@ -460,12 +546,18 @@ export class RuntimeWorker {
     }
   }
 
-  private async appendToMse(append: () => Promise<void> | undefined): Promise<boolean> {
+  private async appendToMse(context: LifecycleCommandContext, append: () => Promise<void> | undefined): Promise<boolean> {
     try {
-      await append()
+      const result = await raceLifecycleOperation(Promise.resolve(append()), context.signal)
+      if (result.cancelled || !this.isLifecycleContextCurrent(context)) {
+        return false
+      }
       return true
     } catch (cause) {
-      if (isQuotaExceededError(cause) && (await this.retryAppendAfterQuotaCleanup(append))) {
+      if (!this.isLifecycleContextCurrent(context)) {
+        return false
+      }
+      if (isQuotaExceededError(cause) && (await this.retryAppendAfterQuotaCleanup(context, append))) {
         return true
       }
 
@@ -479,7 +571,7 @@ export class RuntimeWorker {
     }
   }
 
-  private async retryAppendAfterQuotaCleanup(append: () => Promise<void> | undefined): Promise<boolean> {
+  private async retryAppendAfterQuotaCleanup(context: LifecycleCommandContext, append: () => Promise<void> | undefined): Promise<boolean> {
     const mse = this.mse
     const cutoff = this.quotaCleanupCutoff()
     if (mse === undefined || cutoff === undefined || cutoff <= 0) {
@@ -487,8 +579,14 @@ export class RuntimeWorker {
     }
 
     try {
-      await mse.cleanupBefore(cutoff, { force: true })
-      await append()
+      const cleanup = await raceLifecycleOperation(mse.cleanupBefore(cutoff, { force: true }), context.signal)
+      if (cleanup.cancelled || !this.isLifecycleContextCurrent(context)) {
+        return false
+      }
+      const retry = await raceLifecycleOperation(Promise.resolve(append()), context.signal)
+      if (retry.cancelled || !this.isLifecycleContextCurrent(context)) {
+        return false
+      }
       this.post({
         type: 'warning',
         warning: {
@@ -513,7 +611,7 @@ export class RuntimeWorker {
     return bufferedEnd === undefined ? undefined : Math.max(0, bufferedEnd - backwardBuffer)
   }
 
-  private async applyLatencyPolicy(): Promise<void> {
+  private async applyLatencyPolicy(context?: LifecycleCommandContext): Promise<void> {
     const latencyController = this.latencyController
     const mse = this.mse
     if (latencyController === undefined || mse === undefined) {
@@ -531,6 +629,10 @@ export class RuntimeWorker {
 
     if (evaluation.cleanupBefore !== undefined) {
       await mse.cleanupBefore(evaluation.cleanupBefore)
+    }
+
+    if (context !== undefined && !this.isLifecycleContextCurrent(context)) {
+      return
     }
 
     if (loader !== undefined && evaluation.loaderCommand === 'pause') {
@@ -572,14 +674,31 @@ export class RuntimeWorker {
     }
 
     this.statsTickInFlight = true
+    const context = this.currentLifecycleContext()
     try {
-      await this.applyLatencyPolicy()
-      this.postStats()
+      const policy = await raceLifecycleOperation(this.applyLatencyPolicy(context), context.signal)
+      if (!policy.cancelled && this.isLifecycleContextCurrent(context) && this.state === 'started') {
+        this.postStats()
+      }
     } catch (cause) {
+      if (!this.isLifecycleContextCurrent(context)) {
+        return
+      }
       this.fail('mse', 'RIVMUX_MSE_LATENCY_POLICY_FAILED', 'MSE latency policy failed.', true, cause)
     } finally {
       this.statsTickInFlight = false
     }
+  }
+
+  private currentLifecycleContext(): LifecycleCommandContext {
+    return {
+      generation: this.lifecycleGeneration,
+      signal: this.lifecycleAbortController.signal,
+    }
+  }
+
+  private isLifecycleContextCurrent(context: LifecycleCommandContext): boolean {
+    return !context.signal.aborted && context.generation === this.lifecycleGeneration
   }
 
   private fail(kind: PlayerError['kind'], code: string, message: string, terminal: boolean, cause?: unknown): void {
@@ -588,6 +707,9 @@ export class RuntimeWorker {
   }
 
   private failWithError(error: PlayerError): void {
+    if (this.state === 'destroyed') {
+      return
+    }
     if (error.terminal) {
       this.enterFatalErrorState()
     }
@@ -595,13 +717,13 @@ export class RuntimeWorker {
   }
 
   private enterFatalErrorState(): void {
-    if (this.state === 'fatal-error') {
+    if (this.state === 'fatal-error' || this.state === 'destroyed') {
       return
     }
 
     this.state = 'fatal-error'
     this.discardFmp4AppendBatches()
-    void this.closeLoader()
+    this.fatalCleanupPromise = this.closeLoader().catch(() => undefined)
     this.mse?.destroy()
     this.mse = undefined
     this.latencyController?.reset()
@@ -682,6 +804,48 @@ function createLatencyController(options: NormalizedRivmuxPlayerOptions): Latenc
   return new LatencyController({
     latency: options.latency,
     playback: options.playback,
+  })
+}
+
+type LifecycleOperationResult<T> = { cancelled: true } | { cancelled: false; value: T }
+
+function raceLifecycleOperation<T>(operation: Promise<T>, signal: AbortSignal, onLateValue?: (value: T) => void): Promise<LifecycleOperationResult<T>> {
+  if (signal.aborted) {
+    void operation.then(onLateValue, () => undefined)
+    return Promise.resolve({ cancelled: true })
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const onAbort = (): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      void operation.then(onLateValue, () => undefined)
+      resolve({ cancelled: true })
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      (value) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        signal.removeEventListener('abort', onAbort)
+        resolve({ cancelled: false, value })
+      },
+      (error: unknown) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
   })
 }
 
