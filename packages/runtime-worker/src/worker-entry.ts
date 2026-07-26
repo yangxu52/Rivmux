@@ -1,8 +1,8 @@
-import { RuntimeWorker } from './runtime'
+import { RuntimeWorker } from './runtime/index'
 
 import type { WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 
-export { RuntimeWorker } from './runtime'
+export { RuntimeWorker } from './runtime/index'
 export { HttpFlvLoader, HttpFlvLoaderError } from './loader/http-flv-loader'
 export { MseController } from './mse/mse-controller'
 export { SourceBufferQueue } from './mse/source-buffer-queue'
