@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { HttpFlvLoaderError } from '../src/loader/http-flv-loader'
-import { MseUnsupportedMimeError } from '../src/mse/mime'
-import { RuntimeWorker } from '../src/runtime'
+import { HttpFlvLoaderError } from '../../src/loader/http-flv-loader'
+import { MseUnsupportedMimeError } from '../../src/mse/mime'
+import { RuntimeWorker } from '../../src/runtime'
 
 import type { NormalizedRivmuxPlayerOptions, WorkerMessage } from '@rivmux/protocol'
-import type { StreamChunk, StreamLoader, StreamLoaderStats } from '../src/loader/loader'
-import type { RuntimeMseController, RuntimeWorkerDependencies } from '../src/runtime'
-import type { CoreEvent, TransmuxCoreHost } from '../src/wasm/rivmux-transmux-wasm'
+import type { StreamChunk, StreamLoader, StreamLoaderStats } from '../../src/loader/loader'
+import type { RuntimeMseController, RuntimeWorkerDependencies } from '../../src/runtime'
+import type { CoreEvent, TransmuxCoreHost } from '../../src/wasm/rivmux-transmux-wasm'
 
 describe('RuntimeWorker', () => {
   it('emits ready after init', async () => {
