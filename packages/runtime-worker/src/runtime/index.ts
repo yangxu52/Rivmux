@@ -1,7 +1,7 @@
 import { LatencyController } from '../latency/latency-controller'
 import { raceLifecycleOperation } from './lifecycle'
+import { RuntimeAppendController } from './append'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from '../loader/http-flv-loader'
-import { Fmp4AppendBatcher } from '../mse/fmp4-append-batcher'
 import { MseController } from '../mse/mse-controller'
 import { MseUnsupportedMimeError } from '../mse/mime'
 import { loadWasmTransmuxCoreHost } from '../wasm/wasm-loader'
@@ -39,9 +39,7 @@ export class RuntimeWorker {
   private outputBytes = 0
   private appendQueueMaxLength = 0
   private appendQueueMaxBytes = 0
-  private fmp4AppendBatcher?: Fmp4AppendBatcher
-  private fmp4AppendGeneration = 0
-  private fmp4AppendTail: Promise<boolean> = Promise.resolve(true)
+  private readonly appendController: RuntimeAppendController
   private commandTail: Promise<void> = Promise.resolve()
   private lifecycleGeneration = 0
   private lifecycleAbortController = new AbortController()
@@ -55,6 +53,23 @@ export class RuntimeWorker {
     this.createTransmuxCore = dependencies.createTransmuxCore ?? ((options) => loadWasmTransmuxCoreHost(options.runtime.wasmUrl))
     this.detectRuntime = dependencies.detectRuntime ?? detectWorkerRuntime
     this.now = dependencies.now ?? (() => performance.now())
+    this.appendController = new RuntimeAppendController({
+      appendToMse: (segment, context) => this.appendToMse(context, () => this.mse?.appendMediaSegment(segment)),
+      isStarted: () => this.state === 'started',
+      isLifecycleContextCurrent: (context) => this.isLifecycleContextCurrent(context),
+      onAppended: async (segment, context) => {
+        if (!this.isLifecycleContextCurrent(context)) {
+          return
+        }
+        this.outputBytes += segment.bytes.byteLength
+        await this.applyLatencyPolicy(context)
+      },
+      onError: (cause, context) => {
+        if (this.isLifecycleContextCurrent(context)) {
+          this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
+        }
+      },
+    })
   }
 
   handleCommand(command: WorkerCommand): Promise<void> {
@@ -203,7 +218,7 @@ export class RuntimeWorker {
 
     this.transmuxCore?.destroy()
     this.transmuxCore = transmuxCore
-    this.startFmp4AppendBatcher(context)
+    this.appendController.start(context)
     this.state = 'started'
     this.outputBytes = 0
     this.appendQueueMaxLength = 0
@@ -287,7 +302,7 @@ export class RuntimeWorker {
       }
 
       if (this.isCurrentLoader(loader, runId) && this.isLifecycleContextCurrent(context)) {
-        if (!(await this.flushFmp4AppendBatches(context))) {
+        if (!(await this.appendController.flush(context))) {
           return
         }
         this.postStats(loader.stats)
@@ -309,7 +324,7 @@ export class RuntimeWorker {
 
   private async closeLoader(): Promise<void> {
     this.stopStatsTimer()
-    this.discardFmp4AppendBatches()
+    this.appendController.discard()
     this.transmuxCore?.destroy()
     this.transmuxCore = undefined
     const loader = this.loader
@@ -337,7 +352,7 @@ export class RuntimeWorker {
     }
 
     this.stopStatsTimer()
-    this.discardFmp4AppendBatches()
+    this.appendController.discard()
     this.loader = undefined
     this.loaderRunId += 1
     this.transmuxCore?.destroy()
@@ -396,7 +411,7 @@ export class RuntimeWorker {
           this.failWithError(coreErrorToPlayerError(event.data))
           return false
         case 'initSegment':
-          if (!(await this.flushFmp4AppendBatches(context))) {
+          if (!(await this.appendController.flush(context))) {
             return false
           }
           if (!(await this.appendToMse(context, () => this.mse?.appendInitSegment(event.data)))) {
@@ -410,8 +425,8 @@ export class RuntimeWorker {
           break
         case 'mediaSegment':
           {
-            const batch = this.fmp4AppendBatcher?.push(event.data)
-            if (batch !== undefined && !(await this.enqueueFmp4AppendBatch(batch, context))) {
+            const append = this.appendController.push(event.data, context)
+            if (append !== undefined && !(await append)) {
               return false
             }
           }
@@ -425,70 +440,7 @@ export class RuntimeWorker {
       }
     }
 
-    return this.fmp4AppendTail
-  }
-
-  private startFmp4AppendBatcher(context: LifecycleCommandContext): void {
-    this.discardFmp4AppendBatches()
-    this.fmp4AppendTail = Promise.resolve(true)
-    this.fmp4AppendBatcher = new Fmp4AppendBatcher((track) => {
-      const batch = this.fmp4AppendBatcher?.flush(track)
-      if (batch !== undefined) {
-        void this.enqueueFmp4AppendBatch(batch, context)
-      }
-    })
-  }
-
-  private async flushFmp4AppendBatches(
-    context: LifecycleCommandContext,
-    track?: Extract<CoreEvent, { type: 'mediaSegment' }>['data']['track']
-  ): Promise<boolean> {
-    const batcher = this.fmp4AppendBatcher
-    if (batcher === undefined) {
-      return true
-    }
-
-    const batches = track === undefined ? batcher.flushAll() : [batcher.flush(track)].filter((batch): batch is NonNullable<typeof batch> => batch !== undefined)
-    for (const batch of batches) {
-      if (!(await this.enqueueFmp4AppendBatch(batch, context))) {
-        return false
-      }
-    }
-    return true
-  }
-
-  private enqueueFmp4AppendBatch(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data'], context: LifecycleCommandContext): Promise<boolean> {
-    const generation = this.fmp4AppendGeneration
-    const append = this.fmp4AppendTail.then(async (previousAppendSucceeded) => {
-      if (!previousAppendSucceeded || generation !== this.fmp4AppendGeneration || this.state !== 'started' || !this.isLifecycleContextCurrent(context)) {
-        return false
-      }
-
-      if (!(await this.appendToMse(context, () => this.mse?.appendMediaSegment(segment)))) {
-        return false
-      }
-
-      if (!this.isLifecycleContextCurrent(context)) {
-        return false
-      }
-      this.outputBytes += segment.bytes.byteLength
-      await this.applyLatencyPolicy(context)
-      return true
-    })
-    this.fmp4AppendTail = append.catch((cause) => {
-      if (this.isLifecycleContextCurrent(context)) {
-        this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
-      }
-      return false
-    })
-    return this.fmp4AppendTail
-  }
-
-  private discardFmp4AppendBatches(): void {
-    this.fmp4AppendGeneration += 1
-    this.fmp4AppendBatcher?.discard()
-    this.fmp4AppendBatcher = undefined
-    this.fmp4AppendTail = Promise.resolve(true)
+    return this.appendController.waitForTail()
   }
 
   private collectMseStats(): {
@@ -688,7 +640,7 @@ export class RuntimeWorker {
     }
 
     this.state = 'fatal-error'
-    this.discardFmp4AppendBatches()
+    this.appendController.discard()
     this.fatalCleanupPromise = this.closeLoader().catch(() => undefined)
     this.mse?.destroy()
     this.mse = undefined
