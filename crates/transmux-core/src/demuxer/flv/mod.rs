@@ -1,5 +1,7 @@
+mod parser;
 mod types;
 
+use parser::{FlvParser, FlvParserEvent};
 use types::*;
 
 use crate::codec::aac::AacNormalizer;
@@ -128,9 +130,7 @@ impl FlvAudioNormalizer {
 
 #[derive(Debug)]
 pub(crate) struct FlvDemuxer {
-    max_tag_data_size: usize,
-    buffer: Vec<u8>,
-    state: FlvParseState,
+    parser: FlvParser,
     expects_video: bool,
     expects_audio: bool,
     media_info: MediaInfo,
@@ -148,9 +148,7 @@ impl FlvDemuxer {
     #[must_use]
     pub(crate) fn new(max_tag_data_size: usize) -> Self {
         Self {
-            max_tag_data_size,
-            buffer: Vec::new(),
-            state: FlvParseState::Header,
+            parser: FlvParser::new(max_tag_data_size),
             expects_video: false,
             expects_audio: false,
             media_info: MediaInfo::flv(),
@@ -160,12 +158,12 @@ impl FlvDemuxer {
     }
 
     pub(crate) fn push(&mut self, data: &[u8], out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
-        self.buffer.extend_from_slice(data);
+        self.parser.push(data);
         self.parse_available(out)
     }
 
     pub(crate) fn flush(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
-        if !self.buffer.is_empty() {
+        if self.parser.has_buffered_data() {
             return Err(CoreError::new(
                 CoreErrorCode::InvalidContainerData,
                 "FLV input ended with a partial structure.",
@@ -194,165 +192,22 @@ impl FlvDemuxer {
     }
 
     fn parse_available(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
-        loop {
-            match self.state {
-                FlvParseState::Header => {
-                    if !self.parse_header(out)? {
-                        return Ok(());
-                    }
+        while let Some(event) = self.parser.next_event()? {
+            match event {
+                FlvParserEvent::Header {
+                    expects_audio,
+                    expects_video,
+                } => {
+                    self.expects_audio = expects_audio;
+                    self.expects_video = expects_video;
+                    out.push(CoreEvent::ProbeResult(ProbeResult::flv()));
                 }
-                FlvParseState::PreviousTagSize0 => {
-                    if !self.parse_previous_tag_size0()? {
-                        return Ok(());
-                    }
-                }
-                FlvParseState::TagHeader => {
-                    if !self.parse_tag_header()? {
-                        return Ok(());
-                    }
-                }
-                FlvParseState::TagBody(header) => {
-                    if !self.parse_tag_body(header, out)? {
-                        return Ok(());
-                    }
-                }
-                FlvParseState::PreviousTagSize(header) => {
-                    if !self.parse_previous_tag_size(header)? {
-                        return Ok(());
-                    }
+                FlvParserEvent::Tag { header, payload } => {
+                    self.process_tag(header, &payload, out)?;
                 }
             }
         }
-    }
-
-    fn parse_header(&mut self, out: &mut Vec<CoreEvent>) -> Result<bool, CoreError> {
-        if self.buffer.len() < FLV_HEADER_MIN_LEN {
-            return Ok(false);
-        }
-
-        if &self.buffer[0..3] != b"FLV" {
-            return Err(CoreError::new(
-                CoreErrorCode::UnsupportedContainer,
-                "Input is not an FLV stream.",
-            ));
-        }
-
-        if self.buffer[3] != 1 {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "Unsupported FLV version.",
-            ));
-        }
-
-        self.expects_audio = self.buffer[4] & 0b0000_0100 != 0;
-        self.expects_video = self.buffer[4] & 0b0000_0001 != 0;
-
-        let data_offset = u32::from_be_bytes([
-            self.buffer[5],
-            self.buffer[6],
-            self.buffer[7],
-            self.buffer[8],
-        ]) as usize;
-        if data_offset < FLV_HEADER_MIN_LEN {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "FLV data offset is smaller than the fixed header.",
-            ));
-        }
-
-        if self.buffer.len() < data_offset {
-            return Ok(false);
-        }
-
-        self.buffer.drain(0..data_offset);
-        self.state = FlvParseState::PreviousTagSize0;
-        out.push(CoreEvent::ProbeResult(ProbeResult::flv()));
-        Ok(true)
-    }
-
-    fn parse_previous_tag_size0(&mut self) -> Result<bool, CoreError> {
-        if self.buffer.len() < PREVIOUS_TAG_SIZE_LEN {
-            return Ok(false);
-        }
-
-        let previous_tag_size = read_u32(&self.buffer[0..4]);
-        if previous_tag_size != 0 {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "FLV PreviousTagSize0 must be zero.",
-            ));
-        }
-
-        self.buffer.drain(0..PREVIOUS_TAG_SIZE_LEN);
-        self.state = FlvParseState::TagHeader;
-        Ok(true)
-    }
-
-    fn parse_tag_header(&mut self) -> Result<bool, CoreError> {
-        if self.buffer.len() < TAG_HEADER_LEN {
-            return Ok(false);
-        }
-
-        let data_size = read_u24(&self.buffer[1..4]) as usize;
-        if data_size > self.max_tag_data_size {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "FLV tag data size exceeds the configured limit.",
-            ));
-        }
-
-        let timestamp_lower = read_u24(&self.buffer[4..7]);
-        let timestamp_ms = (timestamp_lower | ((self.buffer[7] as u32) << 24)) as i64;
-        let stream_id = read_u24(&self.buffer[8..11]);
-        if stream_id != 0 {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "FLV tag stream id must be zero.",
-            ));
-        }
-
-        let header = FlvTagHeader {
-            tag_type: self.buffer[0],
-            data_size,
-            timestamp_ms,
-        };
-        self.buffer.drain(0..TAG_HEADER_LEN);
-        self.state = FlvParseState::TagBody(header);
-        Ok(true)
-    }
-
-    fn parse_tag_body(
-        &mut self,
-        header: FlvTagHeader,
-        out: &mut Vec<CoreEvent>,
-    ) -> Result<bool, CoreError> {
-        if self.buffer.len() < header.data_size {
-            return Ok(false);
-        }
-
-        let payload: Vec<u8> = self.buffer.drain(0..header.data_size).collect();
-        self.process_tag(header, &payload, out)?;
-        self.state = FlvParseState::PreviousTagSize(header);
-        Ok(true)
-    }
-
-    fn parse_previous_tag_size(&mut self, header: FlvTagHeader) -> Result<bool, CoreError> {
-        if self.buffer.len() < PREVIOUS_TAG_SIZE_LEN {
-            return Ok(false);
-        }
-
-        let actual = read_u32(&self.buffer[0..4]);
-        let expected = (TAG_HEADER_LEN + header.data_size) as u32;
-        if actual != expected {
-            return Err(CoreError::new(
-                CoreErrorCode::InvalidContainerData,
-                "FLV PreviousTagSize does not match the preceding tag.",
-            ));
-        }
-
-        self.buffer.drain(0..PREVIOUS_TAG_SIZE_LEN);
-        self.state = FlvParseState::TagHeader;
-        Ok(true)
+        Ok(())
     }
 
     fn process_tag(
