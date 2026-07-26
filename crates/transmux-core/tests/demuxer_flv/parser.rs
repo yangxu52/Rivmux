@@ -44,3 +44,33 @@ fn flush_rejects_partial_tag() {
 
     assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
 }
+
+#[test]
+fn flush_rejects_every_truncated_parser_boundary() {
+    let mut input = flv_header();
+    let empty_flv_len = input.len();
+    input.extend_from_slice(&raw_tag(18, 0, &[0x02, 0x00, 0x00]));
+
+    for length in 0..input.len() {
+        if length == empty_flv_len {
+            continue;
+        }
+        let mut core = TransmuxCore::new(CoreConfig::default());
+        core.push_chunk(&input[..length]).unwrap();
+
+        let error = core.flush().unwrap_err();
+        assert_eq!(
+            error.code,
+            CoreErrorCode::InvalidContainerData,
+            "length={length}"
+        );
+    }
+
+    let mut empty = TransmuxCore::new(CoreConfig::default());
+    empty.push_chunk(&input[..empty_flv_len]).unwrap();
+    empty.flush().unwrap();
+
+    let mut complete = TransmuxCore::new(CoreConfig::default());
+    complete.push_chunk(&input).unwrap();
+    complete.flush().unwrap();
+}

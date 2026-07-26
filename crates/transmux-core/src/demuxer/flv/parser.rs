@@ -53,8 +53,8 @@ impl FlvParser {
         }
     }
 
-    pub(super) fn has_buffered_data(&self) -> bool {
-        !self.buffer.is_empty()
+    pub(super) fn has_partial_structure(&self) -> bool {
+        !self.buffer.is_empty() || !matches!(self.state, FlvParseState::TagHeader)
     }
 
     fn parse_header(&mut self) -> Result<Option<FlvParserEvent>, CoreError> {

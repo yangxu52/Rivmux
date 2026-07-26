@@ -50,7 +50,7 @@ impl FlvDemuxer {
     }
 
     pub(crate) fn flush(&mut self, out: &mut Vec<CoreEvent>) -> Result<(), CoreError> {
-        if self.parser.has_buffered_data() {
+        if self.parser.has_partial_structure() {
             return Err(CoreError::new(
                 CoreErrorCode::InvalidContainerData,
                 "FLV input ended with a partial structure.",
