@@ -303,6 +303,93 @@ describe('RuntimeWorker', () => {
     expect(port.messages.at(-1)).toStrictEqual({ type: 'stopped' })
   })
 
+  it.each(['stop', 'destroy'] as const)('cancels a loader open that is still pending when %s begins', async (command) => {
+    const port = new MockPort()
+    const loader = new DeferredOpenLoader()
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+
+    await runtime.handleCommand({ type: command })
+    expect(loader.closed).toBe(true)
+    expect(port.messages.at(-1)).toStrictEqual(command === 'stop' ? { type: 'stopped' } : { type: 'destroyed' })
+    if (command === 'destroy') {
+      expect(port.closed).toBe(true)
+    }
+
+    loader.rejectOpen(new Error('Late loader open failure.'))
+    await flushMicrotasks()
+    expect(port.messages.some((message) => message.type === 'error')).toBe(false)
+  })
+
+  it('ignores a late read result from a stopped loader after restart', async () => {
+    const port = new MockPort()
+    const firstLoader = new DeferredReadLoader()
+    const secondLoader = new MockLoader([])
+    const firstCore = createIdleTransmuxCore()
+    const secondCore = createIdleTransmuxCore()
+    let loaderIndex = 0
+    let coreIndex = 0
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => (loaderIndex++ === 0 ? firstLoader : secondLoader),
+      createTransmuxCore: () => (coreIndex++ === 0 ? firstCore : secondCore),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await firstLoader.waitForRead()
+
+    await runtime.handleCommand({ type: 'stop' })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    firstLoader.resolveRead({ bytes: new Uint8Array([1, 2, 3]), receivedAtMs: 1 })
+    await flushMicrotasks()
+
+    expect(firstLoader.closed).toBe(true)
+    expect(firstCore).toMatchObject({ chunks: [] })
+    expect(secondCore).toMatchObject({ chunks: [] })
+    expect(port.messages.some((message) => message.type === 'error')).toBe(false)
+  })
+
+  it('waits for fatal loader cleanup before acknowledging destroy', async () => {
+    const port = new MockPort()
+    const loader = new DeferredCloseLoader()
+    const transmuxCore = new MockTransmuxCore([[{ type: 'fatalError', data: { code: 'unsupportedVideoCodec', message: 'Unsupported video codec.' } }]])
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForClose()
+
+    let destroyed = false
+    const destroyPromise = runtime.handleCommand({ type: 'destroy' }).then(() => {
+      destroyed = true
+    })
+    await flushMicrotasks()
+    expect(destroyed).toBe(false)
+    expect(port.messages.some((message) => message.type === 'destroyed')).toBe(false)
+
+    loader.resolveClose()
+    await destroyPromise
+    expect(destroyed).toBe(true)
+    expect(port.messages.at(-1)).toStrictEqual({ type: 'destroyed' })
+    expect(port.closed).toBe(true)
+  })
+
   it('lets destroy cancel a pending restart queued after stop', async () => {
     const port = new MockPort()
     const deferredCore = createDeferred<TransmuxCoreHost>()
@@ -1178,6 +1265,75 @@ class FailingOpenLoader implements StreamLoader {
 
   waitForDone(): Promise<void> {
     return this.done
+  }
+}
+
+class DeferredOpenLoader extends MockLoader {
+  private readonly openDeferred = createDeferred<void>()
+  private openStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.openStarted = resolve
+  })
+
+  override open(): Promise<void> {
+    this.openStarted?.()
+    return this.openDeferred.promise
+  }
+
+  waitForOpen(): Promise<void> {
+    return this.started
+  }
+
+  rejectOpen(error: unknown): void {
+    this.openDeferred.reject(error)
+  }
+}
+
+class DeferredReadLoader extends MockLoader {
+  private readonly readDeferred = createDeferred<StreamChunk | null>()
+  private readStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.readStarted = resolve
+  })
+
+  override read(): Promise<StreamChunk | null> {
+    this.readStarted?.()
+    this.readStarted = undefined
+    return this.readDeferred.promise
+  }
+
+  waitForRead(): Promise<void> {
+    return this.started
+  }
+
+  resolveRead(chunk: StreamChunk | null): void {
+    this.readDeferred.resolve(chunk)
+  }
+}
+
+class DeferredCloseLoader extends MockLoader {
+  private readonly closeDeferred = createDeferred<void>()
+  private closeStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.closeStarted = resolve
+  })
+
+  constructor() {
+    super([new Uint8Array([1])])
+  }
+
+  override close(): Promise<void> {
+    this.closed = true
+    this.closeStarted?.()
+    return this.closeDeferred.promise
+  }
+
+  waitForClose(): Promise<void> {
+    return this.started
+  }
+
+  resolveClose(): void {
+    this.closeDeferred.resolve()
   }
 }
 
