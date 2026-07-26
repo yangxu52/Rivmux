@@ -24,6 +24,37 @@ fn parses_flv_header_and_tags_across_arbitrary_chunk_boundaries() {
 
     let events = drain(&mut core);
 
+    let facade_events: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CoreEvent::TrackConfig(_) | CoreEvent::ProbeResult(_) | CoreEvent::MediaInfo(_)
+            )
+        })
+        .collect();
+    assert!(matches!(
+        facade_events.as_slice(),
+        [
+            CoreEvent::ProbeResult(initial),
+            CoreEvent::TrackConfig(TrackConfig::Video(_)),
+            CoreEvent::ProbeResult(video_probe),
+            CoreEvent::MediaInfo(video_info),
+            CoreEvent::TrackConfig(TrackConfig::Audio(_)),
+            CoreEvent::ProbeResult(av_probe),
+            CoreEvent::MediaInfo(av_info),
+        ] if initial.video.is_none()
+            && initial.audio.is_none()
+            && video_probe.video == Some(VideoCodecKind::Avc)
+            && video_probe.audio.is_none()
+            && video_info.video == Some(VideoCodecKind::Avc)
+            && video_info.audio.is_none()
+            && av_probe.video == Some(VideoCodecKind::Avc)
+            && av_probe.audio == Some(AudioCodecKind::Aac)
+            && av_info.video == Some(VideoCodecKind::Avc)
+            && av_info.audio == Some(AudioCodecKind::Aac)
+    ));
+
     assert!(
         matches!(events.first(), Some(CoreEvent::ProbeResult(probe)) if probe.container == ContainerKind::Flv)
     );

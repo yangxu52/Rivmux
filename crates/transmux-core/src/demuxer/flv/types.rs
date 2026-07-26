@@ -47,7 +47,6 @@ pub(super) enum FlvParseState {
     PreviousTagSize0,
     TagHeader,
     TagBody(FlvTagHeader),
-    PreviousTagSize(FlvTagHeader),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

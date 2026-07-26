@@ -48,12 +48,7 @@ impl FlvParser {
                         return Ok(None);
                     }
                 }
-                FlvParseState::TagBody(header) => return Ok(self.parse_tag_body(header)),
-                FlvParseState::PreviousTagSize(header) => {
-                    if !self.parse_previous_tag_size(header)? {
-                        return Ok(None);
-                    }
-                }
+                FlvParseState::TagBody(header) => return self.parse_tag(header),
             }
         }
     }
@@ -159,22 +154,13 @@ impl FlvParser {
         Ok(true)
     }
 
-    fn parse_tag_body(&mut self, header: FlvTagHeader) -> Option<FlvParserEvent> {
-        if self.buffer.len() < header.data_size {
-            return None;
+    fn parse_tag(&mut self, header: FlvTagHeader) -> Result<Option<FlvParserEvent>, CoreError> {
+        let tag_len = header.data_size + PREVIOUS_TAG_SIZE_LEN;
+        if self.buffer.len() < tag_len {
+            return Ok(None);
         }
 
-        let payload = self.buffer.drain(0..header.data_size).collect();
-        self.state = FlvParseState::PreviousTagSize(header);
-        Some(FlvParserEvent::Tag { header, payload })
-    }
-
-    fn parse_previous_tag_size(&mut self, header: FlvTagHeader) -> Result<bool, CoreError> {
-        if self.buffer.len() < PREVIOUS_TAG_SIZE_LEN {
-            return Ok(false);
-        }
-
-        let actual = read_u32(&self.buffer[0..4]);
+        let actual = read_u32(&self.buffer[header.data_size..tag_len]);
         let expected = (TAG_HEADER_LEN + header.data_size) as u32;
         if actual != expected {
             return Err(CoreError::new(
@@ -183,8 +169,9 @@ impl FlvParser {
             ));
         }
 
+        let payload = self.buffer.drain(0..header.data_size).collect();
         self.buffer.drain(0..PREVIOUS_TAG_SIZE_LEN);
         self.state = FlvParseState::TagHeader;
-        Ok(true)
+        Ok(Some(FlvParserEvent::Tag { header, payload }))
     }
 }
