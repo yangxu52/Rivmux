@@ -57,9 +57,7 @@ export class RuntimeWorker {
 
   handleCommand(command: WorkerCommand): Promise<void> {
     if (command.type === 'stop' || command.type === 'destroy') {
-      this.lifecycleGeneration += 1
-      this.lifecycleAbortController.abort()
-      this.lifecycleAbortController = new AbortController()
+      this.invalidateLifecycle()
     }
 
     const context = {
@@ -396,6 +394,7 @@ export class RuntimeWorker {
     }
 
     this.state = 'fatal-error'
+    this.invalidateLifecycle()
     this.session.discardAppend()
     this.fatalCleanupPromise = this.closeLoader().catch(() => undefined)
     this.session.destroyMse()
@@ -406,6 +405,12 @@ export class RuntimeWorker {
 
   private post(message: WorkerMessage, transfer?: Transferable[]): void {
     this.port.postMessage(message, transfer)
+  }
+
+  private invalidateLifecycle(): void {
+    this.lifecycleGeneration += 1
+    this.lifecycleAbortController.abort()
+    this.lifecycleAbortController = new AbortController()
   }
 }
 

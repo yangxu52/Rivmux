@@ -11,6 +11,7 @@ import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from '../loa
 import type { NormalizedRivmuxPlayerOptions, PlayerError, WorkerMessage } from '@rivmux/protocol'
 import type { LifecycleCommandContext } from './lifecycle'
 import type { CoreEvent, TransmuxCoreHost } from '../wasm/rivmux-transmux-wasm'
+import type { RuntimeMseStatsSnapshot } from './stats'
 import type { RuntimeMseController, RuntimeWorkerDependencies } from './types'
 
 export type RuntimeSessionDependencies = Pick<RuntimeWorkerDependencies, 'createMseController' | 'createLoader' | 'createTransmuxCore'> & {
@@ -25,17 +26,6 @@ export type RuntimeSessionDependencies = Pick<RuntimeWorkerDependencies, 'create
   onPlayerError: (error: PlayerError) => void
   applyLatencyPolicy: (context: LifecycleCommandContext) => Promise<void>
   quotaCleanupCutoff: () => number | undefined
-}
-
-export type RuntimeSessionMseStats = {
-  appendQueueLength: number
-  appendQueueBytes: number
-  sourceBufferUpdating: boolean
-  sourceBufferCount: number
-  bufferedRangeCount: number
-  bufferedStart: number | undefined
-  bufferedEnd: number | undefined
-  bufferedDuration: number | undefined
 }
 
 /** Owns all resources that exist only for an attached playback session. */
@@ -138,15 +128,7 @@ export class RuntimeSession {
 
     this.loader = undefined
     this.loaderRunId += 1
-    const closing = loader.close()
-    this.loaderClosePromise = closing
-    try {
-      await closing
-    } finally {
-      if (this.loaderClosePromise === closing) {
-        this.loaderClosePromise = undefined
-      }
-    }
+    await this.closeLoaderInstance(loader)
   }
 
   destroyMse(): void {
@@ -158,7 +140,7 @@ export class RuntimeSession {
     this.appendController.discard()
   }
 
-  collectMseStats(): RuntimeSessionMseStats {
+  collectMseStats(): RuntimeMseStatsSnapshot {
     return {
       appendQueueLength: this.mse?.appendQueueLength ?? 0,
       appendQueueBytes: this.mse?.appendQueueBytes ?? 0,
@@ -210,7 +192,24 @@ export class RuntimeSession {
     this.loaderRunId += 1
     this.transmuxCore?.destroy()
     this.transmuxCore = undefined
-    await loader.close()
+    await this.closeLoaderInstance(loader)
+  }
+
+  private async closeLoaderInstance(loader: StreamLoader): Promise<void> {
+    let closing: Promise<void>
+    try {
+      closing = loader.close()
+    } catch (cause) {
+      closing = Promise.reject(cause)
+    }
+    this.loaderClosePromise = closing
+    try {
+      await closing
+    } finally {
+      if (this.loaderClosePromise === closing) {
+        this.loaderClosePromise = undefined
+      }
+    }
   }
 
   private async consumeLoader(loader: StreamLoader, runId: number, context: LifecycleCommandContext): Promise<void> {
@@ -250,12 +249,25 @@ export class RuntimeSession {
         return
       }
 
-      await this.closeCurrentLoader(loader, runId)
+      try {
+        await this.closeCurrentLoader(loader, runId)
+      } catch {
+        // Preserve the original loader failure; cleanup failure is secondary here.
+      }
+      if (!this.isLifecycleContextCurrent(context)) {
+        return
+      }
       const code = cause instanceof HttpFlvLoaderError ? cause.code : 'RIVMUX_HTTP_LOADER_FAILED'
       this.dependencies.onFailure('network', code, 'HTTP Fetch loader failed.', cause)
     } finally {
       if (this.isCurrentLoader(loader, runId)) {
-        await this.closeCurrentLoader(loader, runId)
+        try {
+          await this.closeCurrentLoader(loader, runId)
+        } catch (cause) {
+          if (this.isLifecycleContextCurrent(context)) {
+            this.dependencies.onFailure('network', 'RIVMUX_HTTP_LOADER_CLOSE_FAILED', 'HTTP Fetch loader failed to close.', cause)
+          }
+        }
       }
     }
   }

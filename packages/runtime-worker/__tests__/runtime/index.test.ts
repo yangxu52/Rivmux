@@ -390,6 +390,58 @@ describe('RuntimeWorker', () => {
     expect(port.closed).toBe(true)
   })
 
+  it('waits for natural loader cleanup before acknowledging destroy', async () => {
+    const port = new MockPort()
+    const loader = new DeferredCloseLoader()
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForClose()
+
+    let destroyed = false
+    const destroyPromise = runtime.handleCommand({ type: 'destroy' }).then(() => {
+      destroyed = true
+    })
+    await flushMicrotasks()
+    expect(destroyed).toBe(false)
+    expect(port.messages.some((message) => message.type === 'destroyed')).toBe(false)
+
+    loader.resolveClose()
+    await destroyPromise
+    expect(port.messages.at(-1)).toStrictEqual({ type: 'destroyed' })
+    expect(port.closed).toBe(true)
+  })
+
+  it('suppresses a loader failure when stop begins during pending cleanup', async () => {
+    const port = new MockPort()
+    const loader = new DeferredCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForClose()
+
+    const stopPromise = runtime.handleCommand({ type: 'stop' })
+    await flushMicrotasks()
+    expect(port.messages.some((message) => message.type === 'stopped')).toBe(false)
+
+    loader.resolveClose()
+    await stopPromise
+    expect(port.messages.at(-1)).toStrictEqual({ type: 'stopped' })
+    expect(port.messages.some((message) => message.type === 'error')).toBe(false)
+  })
+
   it('lets destroy cancel a pending restart queued after stop', async () => {
     const port = new MockPort()
     const deferredCore = createDeferred<TransmuxCoreHost>()
@@ -542,6 +594,46 @@ describe('RuntimeWorker', () => {
 
     expect(port.messages.at(-1)).toStrictEqual({ type: 'stopped' })
     expect(port.messages.filter((message) => message.type === 'error')).toHaveLength(1)
+  })
+
+  it('cancels pending latency actions when a terminal append error occurs', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader()
+    const mse = new DeferredCleanupMseController([{ start: 0, end: 8 }])
+    mse.appendInitError = new Error('append init failed')
+    const transmuxCore = new MockTransmuxCore([
+      [{ type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: new Uint8Array([1]) } }],
+    ])
+    const runtime = createRuntime(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForRead()
+    await runtime.handleCommand({ type: 'playback-control-result', result: { type: 'play', accepted: true } })
+    mse.armCleanup()
+
+    const videoStatePromise = runtime.handleCommand({
+      type: 'video-state',
+      state: { currentTime: 3, readyState: 3, playbackRate: 1, paused: false },
+    })
+    await mse.waitForCleanup()
+    const messageCountBeforeFailure = port.messages.length
+    loader.push(new Uint8Array([1]))
+    await flushMicrotasks()
+
+    await videoStatePromise
+    const messagesAfterFailure = port.messages.slice(messageCountBeforeFailure)
+    expect(messagesAfterFailure).toContainEqual({
+      type: 'error',
+      error: expect.objectContaining({ code: 'RIVMUX_MSE_APPEND_FAILED', terminal: true }),
+    })
+    expect(messagesAfterFailure.some((message) => message.type === 'playback-control')).toBe(false)
+    mse.resolveCleanup()
   })
 
   it('emits append queue, memory-oriented, and network idle stats', async () => {
@@ -814,6 +906,64 @@ describe('RuntimeWorker', () => {
     })
   })
 
+  it('reports a natural loader close failure without an unhandled rejection', async () => {
+    const port = new MockPort()
+    const loader = new RejectingCloseLoader()
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForClose()
+    await flushMicrotasks()
+
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: expect.objectContaining({
+        kind: 'network',
+        code: 'RIVMUX_HTTP_LOADER_CLOSE_FAILED',
+        message: 'HTTP Fetch loader failed to close.',
+        terminal: true,
+      }),
+    })
+  })
+
+  it('preserves the original loader failure when cleanup also fails', async () => {
+    const port = new MockPort()
+    const loader = new RejectingCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForClose()
+    await flushMicrotasks()
+
+    const errors = port.messages.filter((message) => message.type === 'error')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toStrictEqual({
+      type: 'error',
+      error: {
+        kind: 'network',
+        code: 'RIVMUX_HTTP_STATUS',
+        message: 'HTTP Fetch loader failed.',
+        terminal: true,
+        cause: {
+          name: 'HttpFlvLoaderError',
+          message: 'HTTP status 503.',
+        },
+      },
+    })
+  })
+
   it('reports MSE append failures as terminal structured MSE errors and closes the loader', async () => {
     const port = new MockPort()
     const loader = new MockLoader([new Uint8Array([1])])
@@ -1053,6 +1203,10 @@ class DeferredCleanupMseController extends MockMseController {
   private readonly started = new Promise<void>((resolve) => {
     this.cleanupStarted = resolve
   })
+
+  constructor(bufferedRanges?: Array<{ start: number; end: number }>) {
+    super(bufferedRanges)
+  }
 
   override cleanupBefore(cutoff: number): Promise<void> {
     this.cleanupRequests.push(cutoff)
@@ -1334,6 +1488,66 @@ class DeferredCloseLoader extends MockLoader {
 
   resolveClose(): void {
     this.closeDeferred.resolve()
+  }
+}
+
+class DeferredCloseFailingOpenLoader extends FailingOpenLoader {
+  private readonly closeDeferred = createDeferred<void>()
+  private closeStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.closeStarted = resolve
+  })
+
+  override close(): Promise<void> {
+    this.closed = true
+    this.closeStarted?.()
+    return this.closeDeferred.promise
+  }
+
+  waitForClose(): Promise<void> {
+    return this.started
+  }
+
+  resolveClose(): void {
+    this.closeDeferred.resolve()
+  }
+}
+
+class RejectingCloseLoader extends MockLoader {
+  private closeStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.closeStarted = resolve
+  })
+
+  constructor() {
+    super([])
+  }
+
+  override close(): Promise<void> {
+    this.closed = true
+    this.closeStarted?.()
+    return Promise.reject(new Error('loader close failed'))
+  }
+
+  waitForClose(): Promise<void> {
+    return this.started
+  }
+}
+
+class RejectingCloseFailingOpenLoader extends FailingOpenLoader {
+  private closeStarted?: () => void
+  private readonly started = new Promise<void>((resolve) => {
+    this.closeStarted = resolve
+  })
+
+  override close(): Promise<void> {
+    this.closed = true
+    this.closeStarted?.()
+    return Promise.reject(new Error('loader close failed'))
+  }
+
+  waitForClose(): Promise<void> {
+    return this.started
   }
 }
 
