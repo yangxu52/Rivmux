@@ -1,6 +1,6 @@
 import { LatencyController } from '../latency/latency-controller'
 import { raceLifecycleOperation } from './lifecycle'
-import { getNetworkIdleMs } from './stats'
+import { createPlayerStats, updateAppendQueueHighWaterMark } from './stats'
 import { RuntimeSession } from './session'
 
 import type { LatencyMetrics } from '../latency/latency-controller'
@@ -248,41 +248,28 @@ export class RuntimeWorker {
   }
 
   private postStats(loaderStats?: StreamLoaderStats): void {
-    const metrics = this.lastLatencyMetrics
     const mseStats = this.collectMseStats()
     const loaderSnapshot = loaderStats ?? this.session.loaderStats
     this.post({
       type: 'stats',
-      stats: {
-        bytesReceived: loaderSnapshot?.bytesReceived ?? 0,
-        currentNetworkSpeed: loaderSnapshot?.currentNetworkSpeed ?? 0,
-        networkIdleMs: getNetworkIdleMs(loaderSnapshot, this.now()),
+      stats: createPlayerStats({
+        loaderStats: loaderSnapshot,
+        mseStats,
+        latencyMetrics: this.lastLatencyMetrics,
         outputBytes: this.session.emittedBytes,
-        appendQueueLength: mseStats.appendQueueLength,
-        appendQueueBytes: mseStats.appendQueueBytes,
         appendQueueMaxLength: this.appendQueueMaxLength,
         appendQueueMaxBytes: this.appendQueueMaxBytes,
         loaderPaused: this.session.loaderPaused,
-        sourceBufferUpdating: mseStats.sourceBufferUpdating,
-        sourceBufferCount: mseStats.sourceBufferCount,
-        bufferedStart: metrics.bufferedStart ?? mseStats.bufferedStart,
-        bufferedEnd: metrics.bufferedEnd ?? mseStats.bufferedEnd,
-        bufferedDuration: metrics.bufferedDuration ?? mseStats.bufferedDuration,
-        bufferedRangeCount: mseStats.bufferedRangeCount,
-        currentTime: metrics.currentTime,
-        liveLatency: metrics.liveLatency,
-        playbackRate: metrics.playbackRate,
-        readyState: metrics.readyState,
-        droppedFrames: metrics.droppedFrames,
-      },
+        nowMs: this.now(),
+      }),
     })
   }
 
   private collectMseStats() {
     const stats = this.session.collectMseStats()
-    const { appendQueueLength, appendQueueBytes } = stats
-    this.appendQueueMaxLength = Math.max(this.appendQueueMaxLength, appendQueueLength)
-    this.appendQueueMaxBytes = Math.max(this.appendQueueMaxBytes, appendQueueBytes)
+    const highWaterMark = updateAppendQueueHighWaterMark({ length: this.appendQueueMaxLength, bytes: this.appendQueueMaxBytes }, stats)
+    this.appendQueueMaxLength = highWaterMark.length
+    this.appendQueueMaxBytes = highWaterMark.bytes
 
     return {
       ...stats,
