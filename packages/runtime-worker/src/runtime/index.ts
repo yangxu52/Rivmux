@@ -8,47 +8,14 @@ import { loadWasmTransmuxCoreHost } from '../wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from '../wasm/rivmux-transmux-wasm'
 import { getNetworkIdleMs } from './stats'
 
-import type { BufferedRange } from '../latency/buffer-ranges'
 import type { LatencyMetrics } from '../latency/latency-controller'
 import type { StreamLoader, StreamLoaderConfig, StreamLoaderStats } from '../loader/loader'
 import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 import type { CoreEvent, TransmuxCoreHost } from '../wasm/rivmux-transmux-wasm'
-
-type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
 import type { LifecycleCommandContext } from './lifecycle'
-type RuntimeMseCleanupOptions = {
-  force?: boolean
-}
+import type { RuntimeMseController, RuntimeState, RuntimeWorkerDependencies, RuntimeWorkerPort } from './types'
 
-export type RuntimeWorkerPort = {
-  postMessage(message: WorkerMessage, transfer?: Transferable[]): void
-  close(): void
-}
-
-export type RuntimeMseController = {
-  readonly appendQueueLength: number
-  readonly appendQueueBytes: number
-  readonly sourceBufferUpdating: boolean
-  readonly sourceBufferCount: number
-  readonly bufferedStart: number | undefined
-  readonly bufferedEnd: number | undefined
-  readonly bufferedDuration: number | undefined
-  readonly bufferedRanges: BufferedRange[]
-  readonly bufferedRangeCount: number
-  createMediaSourceHandle(): Promise<MediaSourceHandle>
-  appendInitSegment(segment: Extract<CoreEvent, { type: 'initSegment' }>['data']): Promise<void>
-  appendMediaSegment(segment: Extract<CoreEvent, { type: 'mediaSegment' }>['data']): Promise<void>
-  cleanupBefore(cutoff: number, options?: RuntimeMseCleanupOptions): Promise<void>
-  destroy(): void
-}
-
-export type RuntimeWorkerDependencies = {
-  createMseController?: () => RuntimeMseController
-  createLoader?: (config: StreamLoaderConfig) => StreamLoader
-  createTransmuxCore?: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
-  detectRuntime?: () => PlayerError | undefined
-  now?: () => number
-}
+export type { RuntimeMseController, RuntimeWorkerDependencies, RuntimeWorkerPort } from './types'
 
 export class RuntimeWorker {
   private readonly port: RuntimeWorkerPort
