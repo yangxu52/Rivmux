@@ -1,10 +1,12 @@
 import { LatencyController } from '../latency/latency-controller'
+import { raceLifecycleOperation } from './lifecycle'
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from '../loader/http-flv-loader'
 import { Fmp4AppendBatcher } from '../mse/fmp4-append-batcher'
 import { MseController } from '../mse/mse-controller'
 import { MseUnsupportedMimeError } from '../mse/mime'
 import { loadWasmTransmuxCoreHost } from '../wasm/wasm-loader'
 import { coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, coreWarningToPlayerWarning } from '../wasm/rivmux-transmux-wasm'
+import { getNetworkIdleMs } from './stats'
 
 import type { BufferedRange } from '../latency/buffer-ranges'
 import type { LatencyMetrics } from '../latency/latency-controller'
@@ -13,10 +15,7 @@ import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, Wor
 import type { CoreEvent, TransmuxCoreHost } from '../wasm/rivmux-transmux-wasm'
 
 type RuntimeState = 'idle' | 'ready' | 'attached' | 'started' | 'stopped' | 'destroyed' | 'fatal-error'
-type LifecycleCommandContext = {
-  generation: number
-  signal: AbortSignal
-}
+import type { LifecycleCommandContext } from './lifecycle'
 type RuntimeMseCleanupOptions = {
   force?: boolean
 }
@@ -740,15 +739,6 @@ function getNetworkErrorCode(cause: unknown): string {
   return cause instanceof HttpFlvLoaderError ? cause.code : 'RIVMUX_HTTP_LOADER_FAILED'
 }
 
-function getNetworkIdleMs(stats: StreamLoaderStats | undefined, nowMs: number): number | undefined {
-  const markerMs = stats?.lastChunkAtMs ?? stats?.startedAtMs
-  if (markerMs === undefined) {
-    return undefined
-  }
-
-  return Math.max(nowMs - markerMs, 0)
-}
-
 function serializeCause(cause: unknown): unknown {
   if (cause instanceof Error) {
     return {
@@ -804,48 +794,6 @@ function createLatencyController(options: NormalizedRivmuxPlayerOptions): Latenc
   return new LatencyController({
     latency: options.latency,
     playback: options.playback,
-  })
-}
-
-type LifecycleOperationResult<T> = { cancelled: true } | { cancelled: false; value: T }
-
-function raceLifecycleOperation<T>(operation: Promise<T>, signal: AbortSignal, onLateValue?: (value: T) => void): Promise<LifecycleOperationResult<T>> {
-  if (signal.aborted) {
-    void operation.then(onLateValue, () => undefined)
-    return Promise.resolve({ cancelled: true })
-  }
-
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const onAbort = (): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      signal.removeEventListener('abort', onAbort)
-      void operation.then(onLateValue, () => undefined)
-      resolve({ cancelled: true })
-    }
-
-    signal.addEventListener('abort', onAbort, { once: true })
-    void operation.then(
-      (value) => {
-        if (settled) {
-          return
-        }
-        settled = true
-        signal.removeEventListener('abort', onAbort)
-        resolve({ cancelled: false, value })
-      },
-      (error: unknown) => {
-        if (settled) {
-          return
-        }
-        settled = true
-        signal.removeEventListener('abort', onAbort)
-        reject(error)
-      }
-    )
   })
 }
 
