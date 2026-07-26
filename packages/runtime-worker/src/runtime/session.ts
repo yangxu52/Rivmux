@@ -14,6 +14,8 @@ import type { CoreEvent, TransmuxCoreHost } from '../wasm/rivmux-transmux-wasm'
 import type { RuntimeMseStatsSnapshot } from './stats'
 import type { RuntimeMseController, RuntimeWorkerDependencies } from './types'
 
+type RuntimeSessionMessage = Extract<WorkerMessage, { type: 'media-info' | 'warning' }>
+
 export type RuntimeSessionDependencies = Pick<RuntimeWorkerDependencies, 'createMseController' | 'createLoader' | 'createTransmuxCore'> & {
   isStarted: () => boolean
   isLifecycleContextCurrent: (context: LifecycleCommandContext) => boolean
@@ -21,7 +23,7 @@ export type RuntimeSessionDependencies = Pick<RuntimeWorkerDependencies, 'create
   onAppendError: (cause: unknown, context: LifecycleCommandContext) => void
   onLoaderClosing: () => void
   onStats: (stats?: StreamLoaderStats) => void
-  onMessage: (message: WorkerMessage) => void
+  onMessage: (message: RuntimeSessionMessage) => void
   onFailure: (kind: PlayerError['kind'], code: string, message: string, cause?: unknown) => void
   onPlayerError: (error: PlayerError) => void
   applyLatencyPolicy: (context: LifecycleCommandContext) => Promise<void>
