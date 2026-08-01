@@ -3,7 +3,7 @@ mod support;
 use rivmux_transmux_core::{CoreConfig, CoreEvent, TrackKind, TransmuxCore};
 use support::{
     audio_sample_tag, audio_sequence_header_tag, build_flv, drain, enhanced_audio_tag, find_box,
-    minimal_avcc, read_box_type, video_sample_tag, video_sequence_header_tag,
+    minimal_avcc, read_box_type, stereo_opus_head, video_sample_tag, video_sequence_header_tag,
 };
 
 #[test]
@@ -206,12 +206,6 @@ fn is_muxed_media_segment(event: &CoreEvent) -> bool {
         CoreEvent::MediaSegment(segment) => segment.track == TrackKind::Muxed,
         _ => false,
     }
-}
-
-fn stereo_opus_head() -> [u8; 19] {
-    [
-        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0,
-    ]
 }
 
 fn read_trun_sample_duration(bytes: &[u8]) -> u32 {

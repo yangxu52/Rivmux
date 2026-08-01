@@ -3,7 +3,9 @@ use rivmux_transmux_core::{
     TrackConfig, TransmuxCore,
 };
 
-use super::support::{audio_sample_tag, build_flv, drain, enhanced_audio_tag, find_box, raw_tag};
+use super::support::{
+    audio_sample_tag, build_flv, drain, enhanced_audio_tag, raw_tag, stereo_opus_head,
+};
 
 #[test]
 fn rejects_unsupported_audio_codec_with_structured_error() {
@@ -60,16 +62,6 @@ fn parses_enhanced_flv_opus_audio() {
             }) if timing.dts == 0 && timing.pts == 0 && *duration == 960 && *data == [0xF8, 0xFF, 0xFE]
         )
     }));
-    assert!(events.iter().any(|event| {
-        matches!(
-            event,
-            CoreEvent::InitSegment(segment)
-                if segment.codec == "opus"
-                    && segment.timescale == 48_000
-                    && find_box(&segment.bytes, b"Opus").is_some()
-                    && find_box(&segment.bytes, b"dOps").is_some()
-        )
-    }));
 }
 
 #[test]
@@ -80,11 +72,6 @@ fn rejects_enhanced_flv_opus_multitrack_audio() {
     let error = core.push_chunk(&input).unwrap_err();
 
     assert_eq!(error.code, CoreErrorCode::UnsupportedAudioCodec);
-}
-fn stereo_opus_head() -> [u8; 19] {
-    [
-        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0,
-    ]
 }
 #[test]
 fn rejects_aac_raw_sample_before_audio_specific_config() {

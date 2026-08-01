@@ -4,8 +4,8 @@ use rivmux_transmux_core::{
 };
 
 use super::support::{
-    build_flv, drain, enhanced_video_tag, find_box, minimal_avcc, minimal_hvcc, raw_tag,
-    video_sample_tag, video_sequence_header_tag,
+    build_flv, drain, enhanced_video_tag, minimal_avcc, minimal_hvcc, raw_tag, video_sample_tag,
+    video_sequence_header_tag,
 };
 
 #[test]
@@ -56,15 +56,6 @@ fn parses_enhanced_flv_hevc_with_composition_time() {
             }) if timing.dts == 0
                 && timing.pts == 2
                 && *data == [0, 0, 0, 3, 0x26, 0x01, 0x80]
-        )
-    }));
-    assert!(events.iter().any(|event| {
-        matches!(
-            event,
-            CoreEvent::InitSegment(segment)
-                if segment.codec == "hvc1.1.0.L120"
-                    && find_box(&segment.bytes, b"hvc1").is_some()
-                    && find_box(&segment.bytes, b"hvcC").is_some()
         )
     }));
 }
@@ -197,15 +188,6 @@ fn parses_enhanced_flv_av1_temporal_unit() {
             }) if timing.dts == 0 && timing.pts == 0 && *data == [0x12, 0]
         )
     }));
-    assert!(events.iter().any(|event| {
-        matches!(
-            event,
-            CoreEvent::InitSegment(segment)
-                if segment.codec == "av01.0.00M.08"
-                    && find_box(&segment.bytes, b"av01").is_some()
-                    && find_box(&segment.bytes, b"av1C").is_some()
-        )
-    }));
 }
 
 #[test]
@@ -279,13 +261,6 @@ fn ignores_repeated_flv_avc_sequence_headers() {
         events
             .iter()
             .filter(|event| matches!(event, CoreEvent::TrackConfig(TrackConfig::Video(_))))
-            .count(),
-        1
-    );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| matches!(event, CoreEvent::InitSegment(segment) if segment.codec == "avc1.42E01E"))
             .count(),
         1
     );

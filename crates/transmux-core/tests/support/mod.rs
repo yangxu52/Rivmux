@@ -132,6 +132,12 @@ pub fn minimal_hvcc() -> Vec<u8> {
     ]
 }
 
+pub fn stereo_opus_head() -> [u8; 19] {
+    [
+        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xBB, 0, 0, 0, 0, 0,
+    ]
+}
+
 pub fn read_box_type(bytes: &[u8], offset: usize) -> String {
     String::from_utf8(bytes[offset + 4..offset + 8].to_vec()).unwrap()
 }
