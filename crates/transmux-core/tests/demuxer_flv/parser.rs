@@ -3,6 +3,72 @@ use rivmux_transmux_core::{CoreConfig, CoreErrorCode, CoreEvent, TransmuxCore};
 use super::support::{drain, flv_header, raw_tag, raw_tag_with_previous_size};
 
 #[test]
+fn rejects_invalid_flv_headers() {
+    let cases = [
+        (
+            b"BAD\x01\x05\x00\x00\x00\x09\x00\x00\x00\x00".as_slice(),
+            CoreErrorCode::UnsupportedContainer,
+        ),
+        (
+            b"FLV\x02\x05\x00\x00\x00\x09\x00\x00\x00\x00".as_slice(),
+            CoreErrorCode::InvalidContainerData,
+        ),
+        (
+            b"FLV\x01\x05\x00\x00\x00\x08\x00\x00\x00\x00".as_slice(),
+            CoreErrorCode::InvalidContainerData,
+        ),
+        (
+            b"FLV\x01\x05\x00\x00\x00\x09\x00\x00\x00\x01".as_slice(),
+            CoreErrorCode::InvalidContainerData,
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let mut core = TransmuxCore::new(CoreConfig::default());
+        let error = core.push_chunk(input).unwrap_err();
+        assert_eq!(error.code, expected);
+    }
+}
+
+#[test]
+fn accepts_an_extended_flv_header() {
+    let input = b"FLV\x01\x00\x00\x00\x00\x0B\xAA\xBB\x00\x00\x00\x00";
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(input).unwrap();
+    core.flush().unwrap();
+
+    assert!(matches!(
+        drain(&mut core).as_slice(),
+        [CoreEvent::ProbeResult(_)]
+    ));
+}
+
+#[test]
+fn rejects_nonzero_tag_stream_id() {
+    let mut input = flv_header();
+    input.extend_from_slice(&[18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 11]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    let error = core.push_chunk(&input).unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+}
+
+#[test]
+fn rejects_tag_data_larger_than_the_configured_limit() {
+    let mut input = flv_header();
+    input.extend_from_slice(&raw_tag(18, 0, &[1, 2, 3]));
+    let mut core = TransmuxCore::new(CoreConfig {
+        max_tag_data_size: 2,
+    });
+
+    let error = core.push_chunk(&input).unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+}
+
+#[test]
 fn does_not_emit_tag_before_previous_tag_size_is_validated() {
     let mut input = flv_header();
     let tag = raw_tag(18, 0, &[0x02, 0x00, 0x00]);
