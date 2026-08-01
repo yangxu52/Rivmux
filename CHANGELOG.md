@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.5.0](https://github.com/yangxu52/Rivmux/compare/v0.4.0...v0.5.0) (2026-08-01)
+
+### Features
+
+- add AV1 fMP4 normalization ([a97bacf](https://github.com/yangxu52/Rivmux/commit/a97bacf032fac30d5ed0f4938ca085c94bb74dd9))
+- add enhanced FLV Opus audio ([b107e56](https://github.com/yangxu52/Rivmux/commit/b107e56d89ea587f5ac146cb3dfbc68a9def26f3))
+- add HEVC fMP4 normalization ([093babb](https://github.com/yangxu52/Rivmux/commit/093babb289f18aaf614571461bd71a723619b3c9))
+- normalize AVC Annex-B and AAC ADTS ([e195525](https://github.com/yangxu52/Rivmux/commit/e1955255b26569dee9afcd9071b0acd7588ccb49))
+- support enhanced video codecs ([8c0bd97](https://github.com/yangxu52/Rivmux/commit/8c0bd973c4ec5ced8e2aab48d5b01001b6372de4))
+
+### Bug Fixes
+
+- derive dimensions from sequence headers ([4929d0b](https://github.com/yangxu52/Rivmux/commit/4929d0ba2b86d7e22024ab478e5ed7d41cce9dc0))
+- reject in-stream configuration changes ([d5b1b62](https://github.com/yangxu52/Rivmux/commit/d5b1b62fe9f5fc6d5832ea72342331b747f28360))
+- reject incomplete parser states ([4638bfd](https://github.com/yangxu52/Rivmux/commit/4638bfde4e26d620160fa70741ed3198c7ad2b9e))
+- tolerate metadata and detect AVC IDR ([addc119](https://github.com/yangxu52/Rivmux/commit/addc119f69f61d8be0b61be3106485ad095cdf1d))
+- validate tag trailer before dispatch ([66b28dc](https://github.com/yangxu52/Rivmux/commit/66b28dc9b124d1e47269f3b8abe73320efeb3b84))
+- preserve muxed av source buffer for late codec configs ([59438f8](https://github.com/yangxu52/Rivmux/commit/59438f86914d246cf01247d31bcaa2cebc6dff40))
+- harden lifecycle cancellation ([f07e5f0](https://github.com/yangxu52/Rivmux/commit/f07e5f0b730df419f44be17f47a60e620617cdb0))
+- serialize terminal resource cleanup ([110ef63](https://github.com/yangxu52/Rivmux/commit/110ef634309dabda032950d95ba91471c84ee447))
+- validate MSE codecs per stream ([5a92dfc](https://github.com/yangxu52/Rivmux/commit/5a92dfcb9bfc00de3a2ca316cb05cd3be929cab7))
+
+### Performance Improvements
+
+- batch fMP4 media appends ([ff2ce07](https://github.com/yangxu52/Rivmux/commit/ff2ce0748a10bd4189ea8f6f6d7e8eda157dbeb4))
+
+### Miscellaneous Chores
+
+- strip using wasm-opt ([f394f58](https://github.com/yangxu52/Rivmux/commit/f394f58570d36376d1d963d1f799b6e3cd97ccd3))
+
+### Code Refactoring
+
+- extract audio packet processing ([ef9d090](https://github.com/yangxu52/Rivmux/commit/ef9d09043d2f7a2d8cd74ebe72721fa81f056c72))
+- extract demuxer wire types ([cf91cf1](https://github.com/yangxu52/Rivmux/commit/cf91cf1a114446c99a62e9e83477ad6d25c6840c))
+- extract incremental parser ([19d3bcf](https://github.com/yangxu52/Rivmux/commit/19d3bcf05ea0ae2e24a8747f0787a777222c5f3f))
+- extract video packet processing ([3333225](https://github.com/yangxu52/Rivmux/commit/3333225b36b36db235472f330ade58737c123001))
+- isolate playback control ([dd5b4bb](https://github.com/yangxu52/Rivmux/commit/dd5b4bbfa69c3a850dc8345b93cc76eb2c64ce25))
+- split contract domains ([a6df9f9](https://github.com/yangxu52/Rivmux/commit/a6df9f91337f6c79bba99ee8f0c8e2552057bb9b))
+- centralize runtime contracts ([f7db3a2](https://github.com/yangxu52/Rivmux/commit/f7db3a2e81e5d1ed6f212c1846390a6f9d2fd3b1))
+- extract append pipeline ([c64b3cc](https://github.com/yangxu52/Rivmux/commit/c64b3cc0660fe707c323e43e8d7df62157bd2384))
+- extract lifecycle and stats helpers ([486b823](https://github.com/yangxu52/Rivmux/commit/486b823b1b26cc5cb9b1ae8ab2edc0efc1be6ea9))
+- extract playback session ([79c2b8c](https://github.com/yangxu52/Rivmux/commit/79c2b8c319063e143127936698b70d91cb350ec9))
+- isolate option merging ([56ee448](https://github.com/yangxu52/Rivmux/commit/56ee4484cd20cba34f87935373bea51e6595b8bf))
+- isolate stats projection ([f84ca78](https://github.com/yangxu52/Rivmux/commit/f84ca78731068632ed089ae14a453e4b0bfc66af))
+- organize runtime entry ([b9cac4e](https://github.com/yangxu52/Rivmux/commit/b9cac4e972789081d7bc44ba2f7fae633a16da6e))
+- abstract track codec pipeline ([7e68d26](https://github.com/yangxu52/Rivmux/commit/7e68d26cb9f58d5919e5084170ce986fe1ab11a2))
+
+### Tests
+
+- verify playable HTTP-FLV streams ([7a52b86](https://github.com/yangxu52/Rivmux/commit/7a52b864e92ca0aa33e6ea808d26958ac7b89582))
+- cover parser structural boundaries ([22c0a05](https://github.com/yangxu52/Rivmux/commit/22c0a05d825b3d267a84bf73554351f7aef170f8))
+- mirror demuxer module layout ([7a6fceb](https://github.com/yangxu52/Rivmux/commit/7a6fceb27a6bc5606d9f7a05f86b0b5bba0fe87e))
+- separate demuxer and muxer assertions ([41d356c](https://github.com/yangxu52/Rivmux/commit/41d356c55447c4f7d8f05e783a02d3d5fbff0943))
+- characterize loader cancellation boundaries ([0d544c3](https://github.com/yangxu52/Rivmux/commit/0d544c391f055a3ee1bbfaca9dcb75f7f4febc7b))
+- cover lifecycle operation races ([93eae26](https://github.com/yangxu52/Rivmux/commit/93eae26778882f37d47b41846fdc66e14bb040ef))
+
 ## [0.4.0](https://github.com/yangxu52/rivmux/compare/v0.3.0...v0.4.0) (2026-07-14)
 
 ### Features
