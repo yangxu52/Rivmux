@@ -1,27 +1,51 @@
+import { HttpFlvLoaderError } from './http-flv-loader'
+
 export type RetryPolicy = {
   maxAttempts: number
   backoffMs: number
+  maxBackoffMs: number
+  jitterRatio: number
 }
 
-export function createRetryPolicy(input: Partial<RetryPolicy> | undefined): RetryPolicy {
-  return {
-    maxAttempts: clampInteger(input?.maxAttempts, 1),
-    backoffMs: clampInteger(input?.backoffMs, 0),
-  }
+export function createRetryPolicy(input: RetryPolicy): RetryPolicy {
+  return { ...input }
 }
 
-export function getRetryDelayMs(policy: RetryPolicy, attempt: number): number {
-  if (policy.backoffMs === 0) {
+/**
+ * Calculates the delay after a failed one-based connection attempt.
+ * Attempt 1 is the initial connection, so its retry uses the base delay.
+ */
+export function getRetryDelayMs(policy: RetryPolicy, failedAttempt: number, random: () => number = Math.random): number {
+  if (policy.backoffMs === 0 || policy.maxBackoffMs === 0) {
     return 0
   }
 
-  return policy.backoffMs * Math.max(1, attempt)
+  const exponent = Math.max(0, Math.trunc(failedAttempt) - 1)
+  const exponentialDelay = Math.min(policy.maxBackoffMs, policy.backoffMs * 2 ** exponent)
+  const randomValue = normalizeRandom(random())
+  const jitterMultiplier = 1 + (randomValue * 2 - 1) * policy.jitterRatio
+  return Math.min(policy.maxBackoffMs, Math.max(0, Math.round(exponentialDelay * jitterMultiplier)))
 }
 
-function clampInteger(value: number | undefined, minimum: number): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return minimum
+export function isRecoverableHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599)
+}
+
+export function isRecoverableLoaderError(cause: unknown): cause is HttpFlvLoaderError {
+  if (!(cause instanceof HttpFlvLoaderError) || cause.reason === undefined) {
+    return false
   }
 
-  return Math.max(minimum, Math.trunc(value))
+  if (cause.reason === 'http-status') {
+    return cause.status !== undefined && isRecoverableHttpStatus(cause.status)
+  }
+
+  return cause.reason === 'network-error' || cause.reason === 'read-error' || cause.reason === 'read-timeout' || cause.reason === 'unexpected-eof'
+}
+
+function normalizeRandom(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0.5
+  }
+  return Math.min(1, Math.max(0, value))
 }

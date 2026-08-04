@@ -20,7 +20,12 @@ describe('normalizePlayerOptions', () => {
     expect(options.latency.target).toBe(1.5)
     expect(options.latency.startupBuffer).toBe(0.35)
     expect(options.network.headers).toStrictEqual({ Authorization: 'Bearer test' })
-    expect(options.network.retry).toStrictEqual({ maxAttempts: 5, backoffMs: 500 })
+    expect(options.network).toStrictEqual({
+      headers: { Authorization: 'Bearer test' },
+      credentials: 'same-origin',
+      readIdleTimeoutMs: 10_000,
+      retry: { maxAttempts: 5, backoffMs: 500, maxBackoffMs: 8_000, jitterRatio: 0.2 },
+    })
     expect(options.runtime).toMatchObject({
       preferWorkerMse: true,
     })
@@ -52,6 +57,34 @@ describe('normalizePlayerOptions', () => {
 
   it('rejects runtime options that are not implemented by the M1 pipeline', () => {
     expectOptionError({ runtime: { preferWorkerMse: false } }, 'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK')
+  })
+
+  it('normalizes explicit network recovery options', () => {
+    const options = normalizePlayerOptions({
+      network: {
+        readIdleTimeoutMs: 2_500,
+        retry: { maxAttempts: 4, backoffMs: 250, maxBackoffMs: 4_000, jitterRatio: 0.5 },
+      },
+    })
+
+    expect(options.network).toMatchObject({
+      readIdleTimeoutMs: 2_500,
+      retry: { maxAttempts: 4, backoffMs: 250, maxBackoffMs: 4_000, jitterRatio: 0.5 },
+    })
+  })
+
+  it('rejects invalid network recovery options before worker initialization', () => {
+    expectOptionError({ network: { readIdleTimeoutMs: 0 } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { readIdleTimeoutMs: 1.5 } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { maxAttempts: 0 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { maxAttempts: 1.5 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { backoffMs: -1 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { backoffMs: 500.5 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { maxBackoffMs: -1 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { backoffMs: 1_000, maxBackoffMs: 500 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { jitterRatio: -0.1 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { jitterRatio: 1.1 } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
+    expectOptionError({ network: { retry: { jitterRatio: Number.NaN } } }, 'RIVMUX_INVALID_NETWORK_OPTION')
   })
 })
 

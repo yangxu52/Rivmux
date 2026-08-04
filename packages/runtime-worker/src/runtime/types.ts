@@ -37,4 +37,6 @@ export type RuntimeWorkerDependencies = {
   createTransmuxCore?: (options: NormalizedRivmuxPlayerOptions) => TransmuxCoreHost | undefined | Promise<TransmuxCoreHost | undefined>
   detectRuntime?: () => PlayerError | undefined
   now?: () => number
+  sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>
+  random?: () => number
 }

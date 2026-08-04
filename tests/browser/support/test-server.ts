@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 
+import type { ServerResponse } from 'node:http'
+
 import { createM1StaticFmp4Fixture } from '../../fixtures/m1-static-fmp4'
 
 import type { Plugin } from 'vitest/config'
@@ -10,10 +12,20 @@ type StreamState = {
   closed: number
   chunks: number
   bytes: number
+  connections: StreamConnectionState[]
+}
+
+type StreamConnectionState = {
+  sequence: number
+  active: boolean
+  chunks: number
+  bytes: number
+  closed: boolean
 }
 
 export function createBrowserTestServer(): Plugin {
   const streamStates = new Map<string, StreamState>()
+  const activeResponses = new Map<string, Map<number, ServerResponse>>()
 
   return {
     name: 'rivmux-browser-test-server',
@@ -22,7 +34,31 @@ export function createBrowserTestServer(): Plugin {
         const url = new URL(request.url ?? '/', 'http://localhost')
 
         if (url.pathname === '/__rivmux-test/reset') {
-          streamStates.clear()
+          if (request.method !== 'POST') {
+            respondWithJson(response, 405, { error: 'method-not-allowed', allowed: ['POST'] }, { allow: 'POST' })
+            return
+          }
+
+          const requestedIds = url.searchParams.getAll('id')
+          const resetIds = requestedIds.length === 0 ? undefined : new Set(requestedIds)
+          for (const [id, responses] of activeResponses) {
+            if (resetIds !== undefined && !resetIds.has(id)) {
+              continue
+            }
+            for (const activeResponse of responses.values()) {
+              if (!activeResponse.writableEnded) {
+                activeResponse.end()
+              }
+            }
+            activeResponses.delete(id)
+          }
+          if (resetIds === undefined) {
+            streamStates.clear()
+          } else {
+            for (const id of resetIds) {
+              streamStates.delete(id)
+            }
+          }
           response.writeHead(204)
           response.end()
           return
@@ -37,6 +73,44 @@ export function createBrowserTestServer(): Plugin {
           return
         }
 
+        const controlMatch = /^\/__rivmux-test\/stream\/([^/]+)\/control$/.exec(url.pathname)
+        if (controlMatch !== null) {
+          if (request.method !== 'POST') {
+            respondWithJson(response, 405, { error: 'method-not-allowed', allowed: ['POST'] }, { allow: 'POST' })
+            return
+          }
+
+          const action = url.searchParams.get('action')
+          if (action !== 'end') {
+            respondWithJson(response, 400, { error: 'invalid-action', supported: ['end'] })
+            return
+          }
+
+          const connectionSequence = parsePositiveInteger(url.searchParams.get('connection'))
+          if (connectionSequence === undefined) {
+            respondWithJson(response, 400, { error: 'invalid-connection', message: 'connection must be a positive integer' })
+            return
+          }
+
+          const id = controlMatch[1]
+          const state = streamStates.get(id)
+          const connection = state?.connections.find(({ sequence }) => sequence === connectionSequence)
+          if (state === undefined || connection === undefined) {
+            respondWithJson(response, 404, { error: 'connection-not-found', id, connection: connectionSequence })
+            return
+          }
+
+          const activeResponse = activeResponses.get(id)?.get(connectionSequence)
+          if (!connection.active || activeResponse === undefined || activeResponse.writableEnded) {
+            respondWithJson(response, 409, { error: 'connection-not-active', id, connection: connectionSequence })
+            return
+          }
+
+          activeResponse.end()
+          respondWithJson(response, 200, { action: 'end', id, connection: connectionSequence })
+          return
+        }
+
         const match = /^\/__rivmux-test\/stream\/([^/]+)\.flv$/.exec(url.pathname)
         if (match === null) {
           next()
@@ -45,8 +119,41 @@ export function createBrowserTestServer(): Plugin {
 
         const id = match[1]
         const state = getStreamState(streamStates, id)
+        const connection = createConnectionState(state)
+        registerActiveResponse(activeResponses, id, connection.sequence, response)
         state.active = true
         state.opened += 1
+
+        const timers: {
+          stalledWrite?: ReturnType<typeof setTimeout>
+          playableWrite?: ReturnType<typeof setInterval>
+          repeatedWrite?: ReturnType<typeof setInterval>
+        } = {}
+        let cleanedUp = false
+        const cleanup = (): void => {
+          if (cleanedUp) {
+            return
+          }
+          cleanedUp = true
+
+          if (timers.stalledWrite !== undefined) {
+            clearTimeout(timers.stalledWrite)
+          }
+          if (timers.playableWrite !== undefined) {
+            clearInterval(timers.playableWrite)
+          }
+          if (timers.repeatedWrite !== undefined) {
+            clearInterval(timers.repeatedWrite)
+          }
+
+          connection.active = false
+          connection.closed = true
+          state.closed += 1
+          state.active = state.connections.some(({ active }) => active)
+          unregisterActiveResponse(activeResponses, id, connection.sequence, response)
+        }
+        response.once('close', cleanup)
+        response.once('finish', cleanup)
 
         const forcedStatus = parsePositiveInteger(url.searchParams.get('status'))
         if (forcedStatus !== undefined) {
@@ -55,8 +162,6 @@ export function createBrowserTestServer(): Plugin {
             'content-type': 'text/plain; charset=utf-8',
           })
           response.end(`forced status ${forcedStatus}`)
-          state.active = false
-          state.closed += 1
           return
         }
 
@@ -87,46 +192,33 @@ export function createBrowserTestServer(): Plugin {
 
           state.chunks += 1
           state.bytes += bytes.byteLength
+          connection.chunks += 1
+          connection.bytes += bytes.byteLength
           response.write(bytes)
         }
 
         const stallMs = parsePositiveInteger(url.searchParams.get('stallMs'))
         const splitAt = Math.max(1, Math.min(chunk.byteLength - 1, Math.floor(chunk.byteLength / 2)))
-        let stalledWriteTimer: ReturnType<typeof setTimeout> | undefined
-        let playableWriteTimer: ReturnType<typeof setInterval> | undefined
         if (isCoreFixture && stallMs !== undefined && chunk.byteLength > 1) {
           writeChunk(chunk.slice(0, splitAt))
-          stalledWriteTimer = setTimeout(() => {
+          timers.stalledWrite = setTimeout(() => {
             writeChunk(chunk.slice(splitAt))
           }, stallMs)
         } else if (isPlayableFixture) {
           let offset = 0
-          playableWriteTimer = setInterval(() => {
+          timers.playableWrite = setInterval(() => {
             const end = Math.min(offset + 16 * 1024, chunk.byteLength)
             writeChunk(chunk.slice(offset, end))
             offset = end
-            if (offset >= chunk.byteLength && playableWriteTimer !== undefined) {
-              clearInterval(playableWriteTimer)
-              playableWriteTimer = undefined
+            if (offset >= chunk.byteLength && timers.playableWrite !== undefined) {
+              clearInterval(timers.playableWrite)
+              timers.playableWrite = undefined
             }
           }, 10)
         } else {
           writeChunk(chunk)
         }
-        const interval = isCoreFixture ? undefined : setInterval(() => writeChunk(chunk), 50)
-        request.on('close', () => {
-          if (stalledWriteTimer !== undefined) {
-            clearTimeout(stalledWriteTimer)
-          }
-          if (playableWriteTimer !== undefined) {
-            clearInterval(playableWriteTimer)
-          }
-          if (interval !== undefined) {
-            clearInterval(interval)
-          }
-          state.active = false
-          state.closed += 1
-        })
+        timers.repeatedWrite = isCoreFixture ? undefined : setInterval(() => writeChunk(chunk), 50)
       })
     },
   }
@@ -146,9 +238,52 @@ function getStreamState(streamStates: Map<string, StreamState>, id: string): Str
     closed: 0,
     chunks: 0,
     bytes: 0,
+    connections: [],
   }
   streamStates.set(id, state)
   return state
+}
+
+function createConnectionState(state: StreamState): StreamConnectionState {
+  const connection = {
+    sequence: state.opened + 1,
+    active: true,
+    chunks: 0,
+    bytes: 0,
+    closed: false,
+  }
+  state.connections.push(connection)
+  return connection
+}
+
+function registerActiveResponse(activeResponses: Map<string, Map<number, ServerResponse>>, id: string, sequence: number, response: ServerResponse): void {
+  let responses = activeResponses.get(id)
+  if (responses === undefined) {
+    responses = new Map()
+    activeResponses.set(id, responses)
+  }
+  responses.set(sequence, response)
+}
+
+function unregisterActiveResponse(activeResponses: Map<string, Map<number, ServerResponse>>, id: string, sequence: number, response: ServerResponse): void {
+  const responses = activeResponses.get(id)
+  if (responses?.get(sequence) !== response) {
+    return
+  }
+
+  responses.delete(sequence)
+  if (responses.size === 0) {
+    activeResponses.delete(id)
+  }
+}
+
+function respondWithJson(response: ServerResponse, status: number, body: Record<string, unknown>, headers: Record<string, string> = {}): void {
+  response.writeHead(status, {
+    'cache-control': 'no-store',
+    'content-type': 'application/json; charset=utf-8',
+    ...headers,
+  })
+  response.end(JSON.stringify(body))
 }
 
 function parsePositiveInteger(value: string | null): number | undefined {

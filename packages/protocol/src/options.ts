@@ -26,12 +26,18 @@ export type NetworkOptions = {
   headers?: Record<string, string>
   /** Fetch credentials mode used for stream requests. */
   credentials?: RequestCredentials
+  /** Maximum time without a stream chunk while reads are active, in milliseconds. */
+  readIdleTimeoutMs?: number
   /** Retry policy for recoverable stream request failures. */
   retry?: {
-    /** Maximum number of attempts for a stream request. */
+    /** Maximum connection attempts per recovery cycle, including the current connection. */
     maxAttempts?: number
-    /** Base retry delay in milliseconds. */
+    /** Base exponential retry delay in milliseconds. */
     backoffMs?: number
+    /** Maximum retry delay after jitter is applied, in milliseconds. */
+    maxBackoffMs?: number
+    /** Symmetric jitter ratio in the inclusive range from 0 to 1. */
+    jitterRatio?: number
   }
 }
 
@@ -68,9 +74,12 @@ export type NormalizedLatencyOptions = Required<LatencyOptions>
 export type NormalizedNetworkOptions = {
   headers: Record<string, string>
   credentials: RequestCredentials
+  readIdleTimeoutMs: number
   retry: {
     maxAttempts: number
     backoffMs: number
+    maxBackoffMs: number
+    jitterRatio: number
   }
 }
 

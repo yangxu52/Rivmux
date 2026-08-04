@@ -18,7 +18,8 @@ export type StreamLoaderConfig = {
   network: NormalizedNetworkOptions
   fetch?: typeof fetch
   now?: () => number
-  sleep?: (ms: number, signal: AbortSignal) => Promise<void>
+  setTimeout?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimeout?: (timer: ReturnType<typeof setTimeout>) => void
 }
 
 export type StreamLoader = {

@@ -1,4 +1,5 @@
 import { HttpFlvLoader, HttpFlvLoaderError, isAbortLikeError } from '../loader/http-flv-loader'
+import { isRecoverableLoaderError } from '../loader/retry-policy'
 import { MseController } from '../mse/mse-controller'
 import { MseUnsupportedMimeError } from '../mse/mime'
 import { loadWasmTransmuxCoreHost } from '../wasm/wasm-loader'
@@ -24,6 +25,7 @@ export type RuntimeSessionDependencies = Pick<RuntimeWorkerDependencies, 'create
   onLoaderClosing: () => void
   onStats: (stats?: StreamLoaderStats) => void
   onMessage: (message: RuntimeSessionMessage) => void
+  onRecoverableFailure: (cause: HttpFlvLoaderError, context: LifecycleCommandContext) => void
   onFailure: (kind: PlayerError['kind'], code: string, message: string, cause?: unknown) => void
   onPlayerError: (error: PlayerError) => void
   applyLatencyPolicy: (context: LifecycleCommandContext) => Promise<void>
@@ -224,8 +226,17 @@ export class RuntimeSession {
           return
         }
         const chunk = await loader.read()
-        if (chunk === null || !this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
-          break
+        if (chunk === null) {
+          if (this.isCurrentLoader(loader, runId) && this.isLifecycleContextCurrent(context)) {
+            if (!(await this.appendController.flush(context))) {
+              return
+            }
+            this.dependencies.onStats(loader.stats)
+          }
+          return
+        }
+        if (!this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
+          return
         }
 
         this.dependencies.onStats(loader.stats)
@@ -235,13 +246,6 @@ export class RuntimeSession {
         }
         await this.dependencies.applyLatencyPolicy(context)
         if (!this.isCurrentLoader(loader, runId) || !this.isLifecycleContextCurrent(context)) {
-          return
-        }
-        this.dependencies.onStats(loader.stats)
-      }
-
-      if (this.isCurrentLoader(loader, runId) && this.isLifecycleContextCurrent(context)) {
-        if (!(await this.appendController.flush(context))) {
           return
         }
         this.dependencies.onStats(loader.stats)
@@ -257,6 +261,10 @@ export class RuntimeSession {
         // Preserve the original loader failure; cleanup failure is secondary here.
       }
       if (!this.isLifecycleContextCurrent(context)) {
+        return
+      }
+      if (isRecoverableLoaderError(cause)) {
+        this.dependencies.onRecoverableFailure(cause, context)
         return
       }
       const code = cause instanceof HttpFlvLoaderError ? cause.code : 'RIVMUX_HTTP_LOADER_FAILED'

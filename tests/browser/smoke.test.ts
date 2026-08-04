@@ -15,7 +15,7 @@ type TestStreamStats = Record<
 
 describe('Rivmux browser runtime', () => {
   it('loads the default packaged wasm transmux core and appends H.264/AAC fMP4 segments from HTTP-FLV', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m5-default-wasm')
 
     const video = createVideo()
     const player = createPlayer('m5-default-wasm', {
@@ -70,7 +70,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('appends Opus fMP4 segments from Enhanced FLV', async () => {
-    await resetTestStreams()
+    await resetTestStreams('opus-enhanced-flv')
 
     const video = createVideo()
     const player = createPlayer('opus-enhanced-flv', {
@@ -106,7 +106,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('keeps one SourceBuffer when AAC configuration arrives after video samples', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m5-late-aac-config')
 
     const video = createVideo()
     const player = createPlayer('m5-late-aac-config', {
@@ -136,7 +136,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('plays two independent instances and keeps one advancing after destroying the other', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m2-first', 'm2-second')
 
     const firstVideo = createVideo()
     const secondVideo = createVideo()
@@ -168,7 +168,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('stops and restarts the same player with a fresh playable HTTP-FLV stream', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m2-restart')
 
     const video = createVideo()
     const player = createPlayer('m2-restart', { fixture: 'h264-aac-playable' })
@@ -199,7 +199,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('recovers after a short HTTP-FLV read stall and exposes network idle stats', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m7-stall')
 
     const video = createVideo()
     const player = createPlayer('m7-stall', {
@@ -230,7 +230,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('starts a small grid, receives playback signals, and destroys tiles independently', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m7-grid-a', 'm7-grid-b', 'm7-grid-c')
 
     const ids = ['m7-grid-a', 'm7-grid-b', 'm7-grid-c']
     const videos = ids.map(() => createVideo())
@@ -268,7 +268,7 @@ describe('Rivmux browser runtime', () => {
   })
 
   it('emits a structured network error for HTTP failures in Chromium', async () => {
-    await resetTestStreams()
+    await resetTestStreams('m7-network-error')
 
     const video = createVideo()
     const player = createPlayer('m7-network-error', { status: 503 })
@@ -280,7 +280,7 @@ describe('Rivmux browser runtime', () => {
       await player.start()
 
       await waitFor(async () =>
-        errors.some((error) => isRecord(error) && error.kind === 'network' && error.code === 'RIVMUX_HTTP_STATUS' && error.terminal === true)
+        errors.some((error) => isRecord(error) && error.kind === 'network' && error.code === 'RIVMUX_RECONNECT_EXHAUSTED' && error.terminal === true)
       )
     } finally {
       await player.destroy()
@@ -331,8 +331,12 @@ function createVideo(): HTMLVideoElement {
   return video
 }
 
-async function resetTestStreams(): Promise<void> {
-  await fetch('/__rivmux-test/reset', { method: 'POST' })
+async function resetTestStreams(...streamIds: string[]): Promise<void> {
+  const url = new URL('/__rivmux-test/reset', window.location.href)
+  for (const streamId of streamIds) {
+    url.searchParams.append('id', streamId)
+  }
+  await fetch(url, { method: 'POST' })
 }
 
 async function readStreamStats(): Promise<TestStreamStats> {

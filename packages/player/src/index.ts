@@ -16,6 +16,9 @@ export type {
   PlayerEventType,
   PlayerStats,
   PlayerWarning,
+  ReconnectInfo,
+  ReconnectReason,
+  RecoveryInfo,
   RivmuxPlayerOptions,
   RuntimeOptions,
 } from '@rivmux/protocol'

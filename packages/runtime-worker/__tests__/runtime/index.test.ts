@@ -420,7 +420,7 @@ describe('RuntimeWorker', () => {
 
   it('suppresses a loader failure when stop begins during pending cleanup', async () => {
     const port = new MockPort()
-    const loader = new DeferredCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const loader = new DeferredCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 401.', 401))
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
@@ -878,7 +878,7 @@ describe('RuntimeWorker', () => {
 
   it('reports loader failures as terminal structured network errors', async () => {
     const port = new MockPort()
-    const loader = new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const loader = new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 401.', 401))
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
@@ -900,7 +900,7 @@ describe('RuntimeWorker', () => {
         terminal: true,
         cause: {
           name: 'HttpFlvLoaderError',
-          message: 'HTTP status 503.',
+          message: 'HTTP status 401.',
         },
       },
     })
@@ -934,7 +934,7 @@ describe('RuntimeWorker', () => {
 
   it('preserves the original loader failure when cleanup also fails', async () => {
     const port = new MockPort()
-    const loader = new RejectingCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', 503))
+    const loader = new RejectingCloseFailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 401.', 401))
     const runtime = createRuntime(port, {
       createMseController: () => new MockMseController(),
       createLoader: () => loader,
@@ -958,7 +958,7 @@ describe('RuntimeWorker', () => {
         terminal: true,
         cause: {
           name: 'HttpFlvLoaderError',
-          message: 'HTTP status 503.',
+          message: 'HTTP status 401.',
         },
       },
     })
@@ -1105,7 +1105,204 @@ describe('RuntimeWorker', () => {
     expect(port.messages.at(-1)).toStrictEqual({ type: 'destroyed' })
     expect(port.closed).toBe(true)
   })
+
+  it('rebuilds Loader, Core, and MSE and reports recovered only after the first media append', async () => {
+    const port = new MockPort()
+    const firstLoader = new FailingOpenLoader(
+      new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', {
+        phase: 'open',
+        reason: 'http-status',
+        status: 503,
+      })
+    )
+    const replacementLoader = new BlockingLoader()
+    const nextCycleLoader = new BlockingLoader()
+    const loaders: StreamLoader[] = [firstLoader, replacementLoader, nextCycleLoader]
+    const firstMse = new MockMseController()
+    const replacementMse = new MockMseController()
+    const mses = [firstMse, replacementMse, new MockMseController()]
+    const firstCore = createIdleTransmuxCore()
+    const replacementCore = new MockTransmuxCore([mediaEvents()])
+    const cores = [firstCore, replacementCore, createIdleTransmuxCore()]
+    let currentTime = 100
+    const runtime = createRuntime(port, {
+      createLoader: () => loaders.shift() as StreamLoader,
+      createMseController: () => mses.shift() as MockMseController,
+      createTransmuxCore: () => cores.shift(),
+      sleep: () => Promise.resolve(),
+      random: () => 0.5,
+      now: () => (currentTime += 10),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await flushMicrotasks()
+
+    expect(port.messages).toContainEqual({
+      type: 'reconnecting',
+      info: { attempt: 2, maxAttempts: 3, delayMs: 500, reason: 'http-status' },
+    })
+    expect(port.messages.filter((message) => message.type === 'media-source-handle')).toHaveLength(2)
+    expect(port.messages.some((message) => message.type === 'recovered')).toBe(false)
+
+    await replacementLoader.waitForRead()
+    replacementLoader.push(new Uint8Array([1]))
+    await flushMicrotasks(20)
+
+    expect(firstLoader.closed).toBe(true)
+    expect(firstMse.destroyed).toBe(true)
+    expect(firstCore).toMatchObject({ destroyed: true })
+    expect(replacementMse.destroyed).toBe(false)
+    const recovered = port.messages.find((message) => message.type === 'recovered')
+    expect(recovered).toMatchObject({ type: 'recovered', info: { attempt: 2 } })
+    expect(recovered?.info.downtimeMs).toBeGreaterThanOrEqual(0)
+
+    await waitForPendingRead(replacementLoader)
+    replacementLoader.fail(new HttpFlvLoaderError('RIVMUX_HTTP_READ_FAILED', 'Read failed.', { phase: 'read', reason: 'read-error' }))
+    await flushMicrotasks(20)
+    expect(port.messages.filter((message) => message.type === 'reconnecting').map((message) => message.info.attempt)).toStrictEqual([2, 2])
+    await runtime.handleCommand({ type: 'destroy' })
+  })
+
+  it('emits one exhausted error after all recoverable connection attempts fail', async () => {
+    const port = new MockPort()
+    const loaders = Array.from(
+      { length: 3 },
+      () => new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', { phase: 'open', reason: 'http-status', status: 503 }))
+    )
+    const runtime = createRuntime(port, {
+      createLoader: () => loaders.shift() as StreamLoader,
+      createMseController: () => new MockMseController(),
+      createTransmuxCore: () => createIdleTransmuxCore(),
+      sleep: () => Promise.resolve(),
+      random: () => 0.5,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await flushMicrotasks(30)
+
+    expect(port.messages.filter((message) => message.type === 'reconnecting').map((message) => message.info.attempt)).toStrictEqual([2, 3])
+    const errors = port.messages.filter((message) => message.type === 'error')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatchObject({ error: { code: 'RIVMUX_RECONNECT_EXHAUSTED', terminal: true } })
+    await runtime.handleCommand({ type: 'destroy' })
+  })
+
+  it('does not reconnect an unauthorized HTTP response', async () => {
+    const port = new MockPort()
+    const loader = new FailingOpenLoader(
+      new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 401.', { phase: 'open', reason: 'http-status', status: 401 })
+    )
+    const runtime = createRuntime(port, {
+      createLoader: () => loader,
+      createMseController: () => new MockMseController(),
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(port.messages.some((message) => message.type === 'reconnecting')).toBe(false)
+    expect(port.messages.filter((message) => message.type === 'error')).toHaveLength(1)
+  })
+
+  it.each(['stop', 'destroy'] as const)('cancels reconnect backoff when %s begins', async (command) => {
+    const port = new MockPort()
+    const delay = createAbortAwareDelay()
+    let loaderCount = 0
+    const runtime = createRuntime(port, {
+      createLoader: () => {
+        loaderCount += 1
+        return new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', { phase: 'open', reason: 'http-status', status: 503 }))
+      },
+      createMseController: () => new MockMseController(),
+      createTransmuxCore: () => createIdleTransmuxCore(),
+      sleep: delay.sleep,
+      random: () => 0.5,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await delay.started
+    await runtime.handleCommand({ type: command })
+
+    expect(loaderCount).toBe(1)
+    expect(delay.aborted).toBe(true)
+    expect(port.messages.at(-1)).toMatchObject({ type: command === 'stop' ? 'stopped' : 'destroyed' })
+  })
+
+  it('starts a fresh recovery cycle after stop and restart', async () => {
+    const port = new MockPort()
+    const runtime = createRuntime(port, {
+      createLoader: () =>
+        new FailingOpenLoader(new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', 'HTTP status 503.', { phase: 'open', reason: 'http-status', status: 503 })),
+      createMseController: () => new MockMseController(),
+      createTransmuxCore: () => createIdleTransmuxCore(),
+      sleep: (_delayMs, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('Aborted.', 'AbortError')), { once: true })
+        }),
+      random: () => 0.5,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await flushMicrotasks()
+    await runtime.handleCommand({ type: 'stop' })
+
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await flushMicrotasks()
+
+    expect(port.messages.filter((message) => message.type === 'reconnecting').map((message) => message.info.attempt)).toStrictEqual([2, 2])
+    await runtime.handleCommand({ type: 'destroy' })
+  })
 })
+
+function mediaEvents(): CoreEvent[] {
+  return [
+    { type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: new Uint8Array([1]) } },
+    { type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: new Uint8Array(512 * 1024) } },
+  ]
+}
+
+function createAbortAwareDelay(): {
+  sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
+  started: Promise<void>
+  readonly aborted: boolean
+} {
+  let notifyStarted: (() => void) | undefined
+  const started = new Promise<void>((resolve) => {
+    notifyStarted = resolve
+  })
+  let aborted = false
+  return {
+    sleep: (_delayMs, signal) => {
+      notifyStarted?.()
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true
+            reject(new DOMException('Aborted.', 'AbortError'))
+          },
+          { once: true }
+        )
+      })
+    },
+    started,
+    get aborted() {
+      return aborted
+    },
+  }
+}
 
 class MockPort {
   readonly messages: WorkerMessage[] = []
@@ -1322,6 +1519,7 @@ class BlockingLoader implements StreamLoader {
   resumeCount = 0
   private resolveOpen?: () => void
   private resolveRead?: (value: StreamChunk | null) => void
+  private rejectRead?: (cause: unknown) => void
   private resolveReadStarted?: () => void
   private readonly opened = new Promise<void>((resolve) => {
     this.resolveOpen = resolve
@@ -1334,6 +1532,10 @@ class BlockingLoader implements StreamLoader {
     this.stats = stats
   }
 
+  get reading(): boolean {
+    return this.rejectRead !== undefined
+  }
+
   open(): Promise<void> {
     this.resolveOpen?.()
     return Promise.resolve()
@@ -1342,8 +1544,9 @@ class BlockingLoader implements StreamLoader {
   read(): Promise<StreamChunk | null> {
     this.resolveReadStarted?.()
     this.resolveReadStarted = undefined
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.resolveRead = resolve
+      this.rejectRead = reject
     })
   }
 
@@ -1352,7 +1555,15 @@ class BlockingLoader implements StreamLoader {
     this.stats.currentNetworkSpeed = bytes.byteLength
     const resolveRead = this.resolveRead
     this.resolveRead = undefined
+    this.rejectRead = undefined
     resolveRead?.({ bytes, receivedAtMs: this.stats.bytesReceived })
+  }
+
+  fail(cause: unknown): void {
+    const rejectRead = this.rejectRead
+    this.resolveRead = undefined
+    this.rejectRead = undefined
+    rejectRead?.(cause)
   }
 
   pause(): void {
@@ -1597,10 +1808,17 @@ function createRuntime(port: MockPort, dependencies: RuntimeWorkerDependencies =
   })
 }
 
-async function flushMicrotasks(): Promise<void> {
-  for (let index = 0; index < 8; index += 1) {
+async function flushMicrotasks(count = 8): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
     await Promise.resolve()
   }
+}
+
+async function waitForPendingRead(loader: BlockingLoader): Promise<void> {
+  for (let index = 0; index < 100 && !loader.reading; index += 1) {
+    await Promise.resolve()
+  }
+  expect(loader.reading).toBe(true)
 }
 
 function createQuotaExceededError(): Error {
@@ -1613,7 +1831,12 @@ function createOptions(): NormalizedRivmuxPlayerOptions {
   return {
     playback: { autoPlay: true, muted: false },
     latency: { startupBuffer: 0.35, target: 1.2, max: 2.5, maxForwardBuffer: 4, backwardBuffer: 1.5 },
-    network: { headers: {}, credentials: 'same-origin', retry: { maxAttempts: 3, backoffMs: 500 } },
+    network: {
+      headers: {},
+      credentials: 'same-origin',
+      readIdleTimeoutMs: 10_000,
+      retry: { maxAttempts: 3, backoffMs: 500, maxBackoffMs: 8_000, jitterRatio: 0.2 },
+    },
     runtime: { preferWorkerMse: true },
     diagnostics: { statsIntervalMs: 1000, debug: false },
   }

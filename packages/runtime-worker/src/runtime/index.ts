@@ -1,4 +1,5 @@
 import { LatencyController } from '../latency/latency-controller'
+import { getRetryDelayMs } from '../loader/retry-policy'
 import { raceLifecycleOperation } from './lifecycle'
 import { mergeOptions } from './options'
 import { createPlayerStats, updateAppendQueueHighWaterMark } from './stats'
@@ -6,7 +7,8 @@ import { RuntimeSession } from './session'
 
 import type { LatencyMetrics } from '../latency/latency-controller'
 import type { StreamLoaderStats } from '../loader/loader'
-import type { NormalizedRivmuxPlayerOptions, PlayerError, VideoElementState, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
+import type { HttpFlvLoaderError } from '../loader/http-flv-loader'
+import type { NormalizedRivmuxPlayerOptions, PlayerError, RecoveryInfo, VideoElementState, WorkerCommand, WorkerMessage } from '@rivmux/protocol'
 import type { LifecycleCommandContext } from './lifecycle'
 import type { RuntimeState, RuntimeWorkerDependencies, RuntimeWorkerPort } from './types'
 
@@ -16,6 +18,8 @@ export class RuntimeWorker {
   private readonly port: RuntimeWorkerPort
   private readonly detectRuntime: () => PlayerError | undefined
   private readonly now: () => number
+  private readonly sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
+  private readonly random: () => number
   private state: RuntimeState = 'idle'
   private url?: string
   private options?: NormalizedRivmuxPlayerOptions
@@ -31,16 +35,25 @@ export class RuntimeWorker {
   private lifecycleGeneration = 0
   private lifecycleAbortController = new AbortController()
   private fatalCleanupPromise: Promise<void> = Promise.resolve()
+  private recoveryPromise?: Promise<void>
+  private connectionAttempt = 1
+  private recoveryStartedAt?: number
+  private pendingRecovery?: RecoveryInfo
 
   constructor(port: RuntimeWorkerPort, dependencies: RuntimeWorkerDependencies = {}) {
     this.port = port
     this.detectRuntime = dependencies.detectRuntime ?? detectWorkerRuntime
     this.now = dependencies.now ?? (() => performance.now())
+    this.sleep = dependencies.sleep ?? waitForDelay
+    this.random = dependencies.random ?? Math.random
     this.session = new RuntimeSession({
       ...dependencies,
       isStarted: () => this.state === 'started',
       isLifecycleContextCurrent: (context) => this.isLifecycleContextCurrent(context),
-      onMediaAppended: (context) => this.applyLatencyPolicy(context),
+      onMediaAppended: async (context) => {
+        this.markRecovered(context)
+        await this.applyLatencyPolicy(context)
+      },
       onAppendError: (cause, context) => {
         if (this.isLifecycleContextCurrent(context)) {
           this.fail('mse', 'RIVMUX_MSE_APPEND_FAILED', 'MSE append failed.', true, cause)
@@ -49,6 +62,7 @@ export class RuntimeWorker {
       onLoaderClosing: () => this.stopStatsTimer(),
       onStats: (stats) => this.postStats(stats),
       onMessage: (message) => this.post(message),
+      onRecoverableFailure: (cause, context) => this.scheduleRecovery(cause, context),
       onFailure: (kind, code, message, cause) => this.fail(kind, code, message, true, cause),
       onPlayerError: (error) => this.failWithError(error),
       applyLatencyPolicy: (context) => this.applyLatencyPolicy(context),
@@ -203,22 +217,26 @@ export class RuntimeWorker {
   }
 
   private async stop(): Promise<void> {
+    await this.waitForRecovery()
     await this.closeLoader()
     this.session.destroyMse()
     this.latencyController?.reset()
     this.videoState = undefined
     this.lastLatencyMetrics = {}
+    this.resetRecoveryCycle()
     this.state = 'stopped'
     this.post({ type: 'stopped' })
   }
 
   private async destroy(): Promise<void> {
     await this.fatalCleanupPromise
+    await this.waitForRecovery()
     await this.closeLoader()
     this.session.destroyMse()
     this.latencyController?.reset()
     this.videoState = undefined
     this.lastLatencyMetrics = {}
+    this.resetRecoveryCycle()
     this.state = 'destroyed'
     this.post({ type: 'destroyed' })
     this.port.close()
@@ -244,6 +262,141 @@ export class RuntimeWorker {
   private async closeLoader(): Promise<void> {
     this.stopStatsTimer()
     await this.session.close()
+  }
+
+  private scheduleRecovery(cause: HttpFlvLoaderError, context: LifecycleCommandContext): void {
+    if (!this.isLifecycleContextCurrent(context) || this.state !== 'started' || this.recoveryPromise !== undefined) {
+      return
+    }
+
+    const recovery = this.recover(cause, context).finally(() => {
+      if (this.recoveryPromise === recovery) {
+        this.recoveryPromise = undefined
+      }
+    })
+    this.recoveryPromise = recovery
+  }
+
+  private async recover(cause: HttpFlvLoaderError, context: LifecycleCommandContext): Promise<void> {
+    const options = this.options
+    if (options === undefined || !this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+      return
+    }
+
+    this.recoveryStartedAt ??= this.now()
+    if (this.connectionAttempt >= options.network.retry.maxAttempts) {
+      this.fail('network', 'RIVMUX_RECONNECT_EXHAUSTED', 'Live stream reconnect attempts were exhausted.', true, cause)
+      return
+    }
+
+    const failedAttempt = this.connectionAttempt
+    const attempt = failedAttempt + 1
+    this.connectionAttempt = attempt
+    const delayMs = getRetryDelayMs(options.network.retry, failedAttempt, this.random)
+    this.post({
+      type: 'reconnecting',
+      info: {
+        attempt,
+        maxAttempts: options.network.retry.maxAttempts,
+        delayMs,
+        reason: cause.reason ?? 'network-error',
+      },
+    })
+
+    await this.closeLoader()
+    this.session.destroyMse()
+    this.latencyController?.reset()
+    this.lastLatencyMetrics = {}
+    if (!this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+      return
+    }
+
+    try {
+      const delayed = await raceLifecycleOperation(this.sleep(delayMs, context.signal), context.signal)
+      if (delayed.cancelled || !this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+        return
+      }
+    } catch (delayError) {
+      if (this.isLifecycleContextCurrent(context)) {
+        this.fail('network', 'RIVMUX_RECONNECT_DELAY_FAILED', 'Live stream reconnect delay failed.', true, delayError)
+      }
+      return
+    }
+
+    let handle: MediaSourceHandle | undefined
+    try {
+      handle = await this.session.attach(context)
+    } catch (attachError) {
+      if (this.isLifecycleContextCurrent(context)) {
+        this.fail('mse', 'RIVMUX_MSE_ATTACH_FAILED', 'MSE media source attachment failed during reconnect.', true, attachError)
+      }
+      return
+    }
+    if (handle === undefined || !this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+      return
+    }
+    this.post({ type: 'media-source-handle', handle }, [handle])
+
+    try {
+      const core = await this.session.createCore(options, context)
+      if (!this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+        return
+      }
+      if (core === undefined) {
+        this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available during reconnect.', true)
+        return
+      }
+      this.session.start(core, context)
+    } catch (coreError) {
+      if (this.isLifecycleContextCurrent(context)) {
+        this.fail('runtime', 'RIVMUX_TRANSMUX_CORE_UNAVAILABLE', 'Transmux core is not available during reconnect.', true, coreError)
+      }
+      return
+    }
+
+    this.pendingRecovery = {
+      attempt,
+      downtimeMs: 0,
+    }
+    this.appendQueueMaxLength = 0
+    this.appendQueueMaxBytes = 0
+    this.startStatsTimer()
+    this.postStats()
+    this.recoveryPromise = undefined
+    this.startLoader(context)
+  }
+
+  private markRecovered(context: LifecycleCommandContext): void {
+    const recovery = this.pendingRecovery
+    const startedAt = this.recoveryStartedAt
+    if (recovery === undefined || startedAt === undefined || !this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+      return
+    }
+
+    this.pendingRecovery = undefined
+    this.recoveryStartedAt = undefined
+    this.connectionAttempt = 1
+    this.post({
+      type: 'recovered',
+      info: {
+        attempt: recovery.attempt,
+        downtimeMs: Math.max(0, this.now() - startedAt),
+      },
+    })
+  }
+
+  private async waitForRecovery(): Promise<void> {
+    try {
+      await this.recoveryPromise
+    } catch {
+      // Recovery reports current lifecycle failures through the worker protocol.
+    }
+  }
+
+  private resetRecoveryCycle(): void {
+    this.connectionAttempt = 1
+    this.recoveryStartedAt = undefined
+    this.pendingRecovery = undefined
   }
 
   private postStats(loaderStats?: StreamLoaderStats): void {
@@ -402,6 +555,7 @@ export class RuntimeWorker {
     this.latencyController?.reset()
     this.videoState = undefined
     this.lastLatencyMetrics = {}
+    this.resetRecoveryCycle()
   }
 
   private post(message: WorkerMessage, transfer?: Transferable[]): void {
@@ -413,6 +567,31 @@ export class RuntimeWorker {
     this.lifecycleAbortController.abort()
     this.lifecycleAbortController = new AbortController()
   }
+}
+
+function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (delayMs <= 0) {
+    return Promise.resolve()
+  }
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('Reconnect delay was aborted.', 'AbortError'))
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const onAbort = (): void => {
+      cleanup()
+      reject(new DOMException('Reconnect delay was aborted.', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 function serializeCause(cause: unknown): unknown {

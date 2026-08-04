@@ -1,4 +1,5 @@
 import type { PlayerError, PlayerStats, PlayerWarning } from './diagnostics'
+import type { ReconnectInfo, RecoveryInfo } from './events'
 import type { MediaInfo, PlaybackControlAction, PlaybackControlResult, VideoElementState } from './media'
 import type { NormalizedRivmuxPlayerOptions } from './options'
 
@@ -22,6 +23,8 @@ export type WorkerMessage =
   | { type: 'stats'; stats: PlayerStats }
   | { type: 'warning'; warning: PlayerWarning }
   | { type: 'error'; error: PlayerError }
+  | { type: 'reconnecting'; info: ReconnectInfo }
+  | { type: 'recovered'; info: RecoveryInfo }
   | { type: 'playback-control'; action: PlaybackControlAction }
   | { type: 'stopped' }
   | { type: 'destroyed' }

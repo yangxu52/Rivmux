@@ -1,18 +1,34 @@
-import { createRetryPolicy, getRetryDelayMs } from './retry-policy'
-
 import type { StreamChunk, StreamLoader, StreamLoaderConfig, StreamLoaderStats } from './loader'
+import type { ReconnectReason } from '@rivmux/protocol'
 
 type LoaderState = 'idle' | 'opening' | 'open' | 'closed'
+export type HttpFlvLoaderErrorPhase = 'open' | 'read'
 
+export type HttpFlvLoaderErrorOptions = {
+  phase: HttpFlvLoaderErrorPhase
+  reason?: ReconnectReason
+  status?: number
+  cause?: unknown
+}
+
+/** Structured failure raised by one HTTP-FLV connection. */
 export class HttpFlvLoaderError extends Error {
   readonly code: string
+  readonly phase: HttpFlvLoaderErrorPhase
+  readonly reason?: ReconnectReason
   readonly status?: number
+  override readonly cause?: unknown
 
-  constructor(code: string, message: string, status?: number) {
-    super(message)
+  constructor(code: string, message: string, options?: HttpFlvLoaderErrorOptions | number) {
+    const normalizedOptions: HttpFlvLoaderErrorOptions =
+      typeof options === 'number' ? { phase: 'open', reason: 'http-status', status: options } : (options ?? { phase: 'open' })
+    super(message, normalizedOptions.cause === undefined ? undefined : { cause: normalizedOptions.cause })
     this.name = 'HttpFlvLoaderError'
     this.code = code
-    this.status = status
+    this.phase = normalizedOptions.phase
+    this.reason = normalizedOptions.reason
+    this.status = normalizedOptions.status
+    this.cause = normalizedOptions.cause
   }
 }
 
@@ -20,15 +36,17 @@ export class HttpFlvLoader implements StreamLoader {
   private readonly url: string
   private readonly headers: Record<string, string>
   private readonly credentials: RequestCredentials
-  private readonly retry = createRetryPolicy(undefined)
+  private readonly readIdleTimeoutMs: number
   private readonly fetchImpl: typeof fetch
   private readonly now: () => number
-  private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
+  private readonly setTimer: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
+  private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
   private abortController?: AbortController
   private reader?: ReadableStreamDefaultReader<Uint8Array>
   private state: LoaderState = 'idle'
   private pausedState = false
   private resumeWaiters: Array<() => void> = []
+  private activeReadTimeout?: PausableTimeout
   private readonly mutableStats: StreamLoaderStats = {
     bytesReceived: 0,
     currentNetworkSpeed: 0,
@@ -38,10 +56,11 @@ export class HttpFlvLoader implements StreamLoader {
     this.url = config.url
     this.headers = config.network.headers
     this.credentials = config.network.credentials
-    this.retry = createRetryPolicy(config.network.retry)
+    this.readIdleTimeoutMs = config.network.readIdleTimeoutMs
     this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis)
     this.now = config.now ?? (() => performance.now())
-    this.sleep = config.sleep ?? wait
+    this.setTimer = config.setTimeout ?? ((callback, ms) => setTimeout(callback, ms))
+    this.clearTimer = config.clearTimeout ?? ((timer) => clearTimeout(timer))
   }
 
   get closed(): boolean {
@@ -58,26 +77,73 @@ export class HttpFlvLoader implements StreamLoader {
 
   async open(): Promise<void> {
     if (this.state !== 'idle') {
-      throw new HttpFlvLoaderError('RIVMUX_LOADER_INVALID_STATE', 'HTTP Fetch loader can only be opened once.')
+      throw new HttpFlvLoaderError('RIVMUX_LOADER_INVALID_STATE', 'HTTP Fetch loader can only be opened once.', { phase: 'open' })
     }
 
     this.state = 'opening'
     this.mutableStats.startedAtMs = this.now()
+    const abortController = new AbortController()
+    this.abortController = abortController
 
-    for (let attempt = 1; attempt <= this.retry.maxAttempts; attempt += 1) {
-      this.abortController = new AbortController()
+    let response: Response
+    try {
+      const fetchRequest = Promise.resolve(
+        this.fetchImpl(this.url, {
+          method: 'GET',
+          headers: createHeaders(this.headers),
+          credentials: this.credentials,
+          signal: abortController.signal,
+        })
+      )
+      response = await raceWithAbort(fetchRequest, abortController.signal, (lateResponse) => void cancelResponseBody(lateResponse))
+    } catch (cause) {
+      if (this.closed || isAbortLikeError(cause)) {
+        throw cause
+      }
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_NETWORK_ERROR', 'HTTP Fetch loader failed to open the stream.', {
+        phase: 'open',
+        reason: 'network-error',
+        cause,
+      })
+    }
 
-      try {
-        await this.openAttempt()
-        return
-      } catch (cause) {
-        if (this.closed || isAbortLikeError(cause) || attempt >= this.retry.maxAttempts) {
-          throw cause
-        }
+    if (this.closed) {
+      await cancelResponseBody(response)
+      return
+    }
 
-        await this.sleep(getRetryDelayMs(this.retry, attempt), this.abortController.signal)
+    if (!response.ok) {
+      await cancelResponseBody(response)
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', `HTTP Fetch loader received status ${response.status} ${response.statusText}.`, {
+        phase: 'open',
+        reason: 'http-status',
+        status: response.status,
+      })
+    }
+
+    if (response.body === null) {
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_BODY_UNAVAILABLE', 'HTTP Fetch loader response body is unavailable.', { phase: 'open' })
+    }
+
+    const contentLength = response.headers.get('Content-Length')
+    if (contentLength !== null) {
+      const parsedContentLength = Number.parseInt(contentLength, 10)
+      if (Number.isFinite(parsedContentLength) && parsedContentLength >= 0) {
+        this.mutableStats.contentLength = parsedContentLength
       }
     }
+
+    try {
+      this.reader = response.body.getReader()
+    } catch (cause) {
+      await cancelResponseBody(response)
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_NETWORK_ERROR', 'HTTP Fetch loader could not acquire a stream reader.', {
+        phase: 'open',
+        reason: 'network-error',
+        cause,
+      })
+    }
+    this.state = 'open'
   }
 
   async read(): Promise<StreamChunk | null> {
@@ -88,21 +154,64 @@ export class HttpFlvLoader implements StreamLoader {
     }
 
     const reader = this.reader
-    if (reader === undefined) {
+    const abortController = this.abortController
+    if (reader === undefined || abortController === undefined) {
       if (this.closed) {
         return null
       }
 
-      throw new HttpFlvLoaderError('RIVMUX_LOADER_NOT_OPEN', 'HTTP Fetch loader must be opened before read().')
+      throw new HttpFlvLoaderError('RIVMUX_LOADER_NOT_OPEN', 'HTTP Fetch loader must be opened before read().', { phase: 'read' })
     }
 
-    const result = await reader.read()
+    const timeout = new PausableTimeout({
+      durationMs: this.readIdleTimeoutMs,
+      now: this.now,
+      setTimeout: this.setTimer,
+      clearTimeout: this.clearTimer,
+    })
+    this.activeReadTimeout = timeout
+    if (this.pausedState) {
+      timeout.pause()
+    }
+
+    let result: ReadableStreamReadResult<Uint8Array>
+    try {
+      result = await raceWithAbort(Promise.race([reader.read(), timeout.promise]), abortController.signal)
+    } catch (cause) {
+      if (this.closed || isAbortLikeError(cause)) {
+        return null
+      }
+      if (cause instanceof ReadIdleTimeoutError) {
+        throw new HttpFlvLoaderError('RIVMUX_HTTP_READ_TIMEOUT', `HTTP Fetch loader received no data for ${this.readIdleTimeoutMs} ms.`, {
+          phase: 'read',
+          reason: 'read-timeout',
+          cause,
+        })
+      }
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_READ_FAILED', 'HTTP Fetch loader failed while reading the stream.', {
+        phase: 'read',
+        reason: 'read-error',
+        cause,
+      })
+    } finally {
+      timeout.cancel()
+      if (this.activeReadTimeout === timeout) {
+        this.activeReadTimeout = undefined
+      }
+    }
+
     if (result.done) {
       releaseReader(reader)
       if (this.reader === reader) {
         this.reader = undefined
       }
-      return null
+      if (this.closed) {
+        return null
+      }
+      throw new HttpFlvLoaderError('RIVMUX_HTTP_UNEXPECTED_EOF', 'HTTP Fetch loader reached an unexpected end of the live stream.', {
+        phase: 'read',
+        reason: 'unexpected-eof',
+      })
     }
 
     const bytes = result.value
@@ -118,11 +227,12 @@ export class HttpFlvLoader implements StreamLoader {
   }
 
   pause(): void {
-    if (this.closed) {
+    if (this.closed || this.pausedState) {
       return
     }
 
     this.pausedState = true
+    this.activeReadTimeout?.pause()
   }
 
   resume(): void {
@@ -131,6 +241,7 @@ export class HttpFlvLoader implements StreamLoader {
     }
 
     this.pausedState = false
+    this.activeReadTimeout?.resume()
     this.resolveResumeWaiters()
   }
 
@@ -142,6 +253,7 @@ export class HttpFlvLoader implements StreamLoader {
     this.state = 'closed'
     this.pausedState = false
     this.resolveResumeWaiters()
+    this.activeReadTimeout?.cancel()
     this.abortController?.abort()
 
     const reader = this.reader
@@ -157,45 +269,6 @@ export class HttpFlvLoader implements StreamLoader {
     } finally {
       releaseReader(reader)
     }
-  }
-
-  private async openAttempt(): Promise<void> {
-    const abortController = this.abortController
-    if (abortController === undefined) {
-      throw new HttpFlvLoaderError('RIVMUX_LOADER_INVALID_STATE', 'HTTP Fetch loader abort controller is missing.')
-    }
-
-    const response = await this.fetchImpl(this.url, {
-      method: 'GET',
-      headers: createHeaders(this.headers),
-      credentials: this.credentials,
-      signal: abortController.signal,
-    })
-
-    if (this.closed) {
-      await response.body?.cancel()
-      return
-    }
-
-    if (!response.ok) {
-      await response.body?.cancel()
-      throw new HttpFlvLoaderError('RIVMUX_HTTP_STATUS', `HTTP Fetch loader received status ${response.status} ${response.statusText}.`, response.status)
-    }
-
-    if (response.body === null) {
-      throw new HttpFlvLoaderError('RIVMUX_HTTP_BODY_UNAVAILABLE', 'HTTP Fetch loader response body is unavailable.')
-    }
-
-    const contentLength = response.headers.get('Content-Length')
-    if (contentLength !== null) {
-      const parsedContentLength = Number.parseInt(contentLength, 10)
-      if (Number.isFinite(parsedContentLength) && parsedContentLength >= 0) {
-        this.mutableStats.contentLength = parsedContentLength
-      }
-    }
-
-    this.reader = response.body.getReader()
-    this.state = 'open'
   }
 
   private waitUntilResumed(): Promise<void> {
@@ -229,6 +302,14 @@ function createHeaders(headers: Record<string, string>): Headers {
   return result
 }
 
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    // Response cancellation is best-effort while rejecting an unusable connection.
+  }
+}
+
 function releaseReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
   try {
     reader.releaseLock()
@@ -237,33 +318,124 @@ function releaseReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
   }
 }
 
-function wait(ms: number, signal: AbortSignal): Promise<void> {
-  if (ms <= 0) {
-    return Promise.resolve()
-  }
+function createAbortError(): DOMException {
+  return new DOMException('HTTP Fetch loader was aborted.', 'AbortError')
+}
 
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal, onLateValue?: (value: T) => void): Promise<T> {
   if (signal.aborted) {
+    void operation.then(onLateValue, () => undefined)
     return Promise.reject(createAbortError())
   }
 
   return new Promise((resolve, reject) => {
-    const cleanup = (): void => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-    }
+    let settled = false
     const onAbort = (): void => {
-      cleanup()
+      if (settled) {
+        return
+      }
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      void operation.then(onLateValue, () => undefined)
       reject(createAbortError())
     }
-    const timer = setTimeout(() => {
-      cleanup()
-      resolve()
-    }, ms)
 
     signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      (value) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        if (settled) {
+          return
+        }
+        settled = true
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
   })
 }
 
-function createAbortError(): DOMException {
-  return new DOMException('HTTP Fetch loader was aborted.', 'AbortError')
+class ReadIdleTimeoutError extends Error {
+  constructor() {
+    super('HTTP Fetch loader read timed out.')
+    this.name = 'ReadIdleTimeoutError'
+  }
+}
+
+type PausableTimeoutOptions = {
+  durationMs: number
+  now: () => number
+  setTimeout: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimeout: (timer: ReturnType<typeof setTimeout>) => void
+}
+
+class PausableTimeout {
+  readonly promise: Promise<never>
+  private readonly now: () => number
+  private readonly setTimer: PausableTimeoutOptions['setTimeout']
+  private readonly clearTimer: PausableTimeoutOptions['clearTimeout']
+  private reject?: (error: ReadIdleTimeoutError) => void
+  private timer?: ReturnType<typeof setTimeout>
+  private remainingMs: number
+  private startedAtMs = 0
+  private settled = false
+
+  constructor(options: PausableTimeoutOptions) {
+    this.now = options.now
+    this.setTimer = options.setTimeout
+    this.clearTimer = options.clearTimeout
+    this.remainingMs = options.durationMs
+    this.promise = new Promise<never>((_, reject) => {
+      this.reject = reject
+    })
+    this.start()
+  }
+
+  pause(): void {
+    if (this.settled || this.timer === undefined) {
+      return
+    }
+    this.remainingMs = Math.max(0, this.remainingMs - Math.max(0, this.now() - this.startedAtMs))
+    this.clearTimer(this.timer)
+    this.timer = undefined
+  }
+
+  resume(): void {
+    if (this.settled || this.timer !== undefined) {
+      return
+    }
+    this.start()
+  }
+
+  cancel(): void {
+    if (this.settled) {
+      return
+    }
+    this.settled = true
+    if (this.timer !== undefined) {
+      this.clearTimer(this.timer)
+      this.timer = undefined
+    }
+    this.reject = undefined
+  }
+
+  private start(): void {
+    this.startedAtMs = this.now()
+    this.timer = this.setTimer(() => {
+      if (this.settled) {
+        return
+      }
+      this.settled = true
+      this.timer = undefined
+      this.reject?.(new ReadIdleTimeoutError())
+      this.reject = undefined
+    }, this.remainingMs)
+  }
 }

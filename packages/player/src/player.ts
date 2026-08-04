@@ -280,6 +280,12 @@ export class RivmuxPlayer {
       case 'warning':
         this.events.emit('warning', message.warning)
         return
+      case 'reconnecting':
+        this.events.emit('reconnecting', message.info)
+        return
+      case 'recovered':
+        this.events.emit('recovered', message.info)
+        return
       case 'error':
         if (message.error.terminal) {
           this.enterFatalErrorState(message.error)
@@ -299,6 +305,9 @@ export class RivmuxPlayer {
   }
 
   private attachMediaSourceHandle(handle: MediaSourceHandle): void {
+    if (this.state === 'started') {
+      this.playback.detachSource()
+    }
     if (!this.playback.attachMediaSourceHandle(handle)) {
       const error = createPlayerError(
         'runtime',

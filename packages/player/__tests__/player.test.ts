@@ -116,6 +116,37 @@ describe('RivmuxPlayer', () => {
     expect(workers[1]?.commands.map((command) => command.type)).toStrictEqual(['init', 'attach-media-source'])
   })
 
+  it('rebinds a replacement MediaSourceHandle and forwards recovery events', async () => {
+    const worker = new MockWorker()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const video = createMockVideo()
+    const reconnecting = vi.fn()
+    const recovered = vi.fn()
+    player.on('reconnecting', reconnecting)
+    player.on('recovered', recovered)
+
+    const attach = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: { id: 'initial' } as unknown as MediaSourceHandle })
+    await attach
+    await player.start()
+
+    worker.emit({ type: 'reconnecting', info: { attempt: 2, maxAttempts: 3, delayMs: 500, reason: 'read-error' } })
+    worker.emit({ type: 'media-source-handle', handle: { id: 'replacement' } as unknown as MediaSourceHandle })
+    worker.emit({ type: 'recovered', info: { attempt: 2, downtimeMs: 150 } })
+
+    expect(video.pause).toHaveBeenCalledOnce()
+    expect(video.srcObject).toStrictEqual({ id: 'replacement' })
+    expect(reconnecting).toHaveBeenCalledWith({ attempt: 2, maxAttempts: 3, delayMs: 500, reason: 'read-error' })
+    expect(recovered).toHaveBeenCalledWith({ attempt: 2, downtimeMs: 150 })
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
   it('preserves an explicit WASM URL when initializing the worker', async () => {
     const worker = new MockWorker()
     const player = new RivmuxPlayer(

@@ -96,12 +96,15 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
   },
   network: {
     credentials: 'include',
+    readIdleTimeoutMs: 10000,
     headers: {
       Authorization: 'Bearer token',
     },
     retry: {
       maxAttempts: 5,
       backoffMs: 500,
+      maxBackoffMs: 8000,
+      jitterRatio: 0.2,
     },
   },
   diagnostics: {
@@ -132,12 +135,15 @@ Values are in seconds.
 
 ### `network`
 
-| Option              | Default         | Description                                                       |
-| ------------------- | --------------- | ----------------------------------------------------------------- |
-| `headers`           | `{}`            | Extra request headers for the HTTP-FLV stream.                    |
-| `credentials`       | `'same-origin'` | Fetch credentials mode for stream requests.                       |
-| `retry.maxAttempts` | `3`             | Maximum stream request attempts before reporting a network error. |
-| `retry.backoffMs`   | `500`           | Base retry delay in milliseconds.                                 |
+| Option               | Default         | Description                                                                              |
+| -------------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `headers`            | `{}`            | HTTP-FLV 请求附带的额外请求头。                                                          |
+| `credentials`        | `'same-origin'` | Fetch 请求的 credentials 模式。                                                          |
+| `readIdleTimeoutMs`  | `10000`         | 主动读取期间持续无数据的超时时间；Loader 因背压暂停时不计时。                            |
+| `retry.maxAttempts`  | `3`             | 单次故障恢复周期允许的连接总次数，包含发生故障的当前连接；成功恢复后下一次故障重新计数。 |
+| `retry.backoffMs`    | `500`           | 指数退避的基础延迟，单位为毫秒。                                                         |
+| `retry.maxBackoffMs` | `8000`          | 应用抖动后的最大退避延迟，单位为毫秒。                                                   |
+| `retry.jitterRatio`  | `0.2`           | 对称抖动比例，取值范围为 `0` 至 `1`；`0` 表示关闭抖动。                                  |
 
 ### `runtime`
 
@@ -181,26 +187,43 @@ is responsible for compatible CSP and CORS policies, serving the WASM asset as
 ## Events
 
 ```ts
-import type { MediaInfo, PlayerError, PlayerStats, PlayerWarning } from 'rivmux'
+import type { MediaInfo, PlayerError, PlayerStats, PlayerWarning, ReconnectInfo, RecoveryInfo } from 'rivmux'
 
 player.on('ready', () => {})
 player.on('mediaInfo', (info: MediaInfo) => {})
 player.on('stats', (stats: PlayerStats) => {})
 player.on('warning', (warning: PlayerWarning) => {})
+player.on('reconnecting', (info: ReconnectInfo) => {})
+player.on('recovered', (info: RecoveryInfo) => {})
 player.on('error', (error: PlayerError) => {})
 player.on('stopped', () => {})
 player.on('destroyed', () => {})
 ```
 
-| Event       | Payload         | Description                                                             |
-| ----------- | --------------- | ----------------------------------------------------------------------- |
-| `ready`     | `undefined`     | The worker/runtime is initialized.                                      |
-| `mediaInfo` | `MediaInfo`     | Stream container and codec metadata has been detected.                  |
-| `stats`     | `PlayerStats`   | Runtime diagnostics such as bytes, buffer, latency, and playback state. |
-| `warning`   | `PlayerWarning` | Recoverable issue reported by the runtime.                              |
-| `error`     | `PlayerError`   | Runtime, network, demux, codec, mux, MSE, or unsupported-feature error. |
-| `stopped`   | `undefined`     | The stream has stopped and the media source has been detached.          |
-| `destroyed` | `undefined`     | The worker/runtime has been destroyed.                                  |
+| Event          | Payload         | Description                                                        |
+| -------------- | --------------- | ------------------------------------------------------------------ |
+| `ready`        | `undefined`     | Worker runtime 已初始化。                                          |
+| `mediaInfo`    | `MediaInfo`     | 已识别媒体容器和 codec 信息。                                      |
+| `stats`        | `PlayerStats`   | 字节数、缓冲、延迟和播放状态等运行时统计。                         |
+| `warning`      | `PlayerWarning` | Runtime 报告的可恢复问题。                                         |
+| `reconnecting` | `ReconnectInfo` | 已确定执行下一次连接，并给出连接序号、最大次数、延迟和故障原因。   |
+| `recovered`    | `RecoveryInfo`  | 新会话的首个媒体片段已经成功追加；仅建立 HTTP 连接不会触发该事件。 |
+| `error`        | `PlayerError`   | Runtime、网络、demux、codec、mux、MSE 或环境不支持错误。           |
+| `stopped`      | `undefined`     | 播放已停止，媒体源已解绑。                                         |
+| `destroyed`    | `undefined`     | Worker runtime 已销毁。                                            |
+
+## 直播连接恢复
+
+Rivmux 会为以下直播网络故障重建 Loader、转封装核心和 MSE 播放会话：
+
+- HTTP `408`、`429` 和 `5xx`。
+- 建连或读取阶段的网络异常。
+- 已建立直播流后的异常 EOF。
+- 主动读取期间超过 `network.readIdleTimeoutMs` 未收到数据。
+
+HTTP `401`、`403` 和其他不可恢复的 `4xx` 不会重试。媒体解析、codec、mux 和 MSE 错误也不进入网络恢复流程。恢复次数耗尽后会产生一次终止错误 `RIVMUX_RECONNECT_EXHAUSTED`。
+
+恢复采用指数退避、最大延迟和抖动。等待重连或重建会话期间调用 `stop()` 或 `destroy()` 会立即取消恢复，不会继续创建连接。恢复会更换 `MediaSourceHandle`，因此可能出现短暂中断和时间线重置；当前不承诺无缝续播或跨连接连续时间线。
 
 ## Type Imports
 
@@ -216,6 +239,9 @@ import type {
   PlayerError,
   PlayerStats,
   PlayerWarning,
+  ReconnectInfo,
+  ReconnectReason,
+  RecoveryInfo,
   RivmuxPlayerOptions,
   RuntimeOptions,
 } from 'rivmux'

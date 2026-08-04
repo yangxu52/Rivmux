@@ -1,26 +1,31 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HttpFlvLoader, HttpFlvLoaderError } from '../src/loader/http-flv-loader'
 
 import type { NormalizedNetworkOptions } from '@rivmux/protocol'
 
 describe('HttpFlvLoader', () => {
-  it('opens a fetch stream and reports read stats', async () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens one fetch stream and reports read stats', async () => {
     const reader = new MockReader([new Uint8Array([1, 2, 3]), new Uint8Array([4])])
     const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(createResponse({ body: new MockReadableStream(reader), contentLength: '4' })))
-    const nowValues = [1000, 1100, 1200, 1300]
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions(),
-      fetch: fetchMock,
-      now: () => nowValues.shift() ?? 1300,
-    })
+    const loader = createLoader({ reader, fetch: fetchMock })
 
     await loader.open()
+    vi.setSystemTime(1_100)
     const first = await loader.read()
+    vi.setSystemTime(1_200)
     const second = await loader.read()
-    const done = await loader.read()
 
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('https://example.test/live.flv', {
       method: 'GET',
       headers: expect.any(Headers),
@@ -29,8 +34,6 @@ describe('HttpFlvLoader', () => {
     })
     expect(first?.bytes).toEqual(new Uint8Array([1, 2, 3]))
     expect(second?.bytes).toEqual(new Uint8Array([4]))
-    expect(done).toBeNull()
-    expect(reader.releaseLock).toHaveBeenCalledTimes(1)
     expect(loader.stats).toMatchObject({
       bytesReceived: 4,
       currentNetworkSpeed: 10,
@@ -38,94 +41,170 @@ describe('HttpFlvLoader', () => {
     })
   })
 
-  it('aborts, cancels, and releases the reader on close', async () => {
-    const reader = new MockReader([new Uint8Array([1])])
-    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
-      expect(init?.signal).toBeInstanceOf(AbortSignal)
-      return Promise.resolve(createResponse({ body: new MockReadableStream(reader) }))
+  it('performs only one fetch attempt and wraps an open network failure', async () => {
+    const networkError = new TypeError('fetch failed')
+    const fetchMock = vi.fn<typeof fetch>(() => Promise.reject(networkError))
+    const loader = createLoader({ fetch: fetchMock })
+
+    await expect(loader.open()).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_NETWORK_ERROR',
+      phase: 'open',
+      reason: 'network-error',
+      cause: networkError,
+    } satisfies Partial<HttpFlvLoaderError>)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a non-ok HTTP response with status metadata', async () => {
+    const body = new MockReadableStream(new MockReader([]))
+    const loader = createLoader({
+      fetch: () => Promise.resolve(createResponse({ ok: false, status: 503, statusText: 'Service Unavailable', body })),
     })
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions(),
-      fetch: fetchMock,
-      now: () => 1,
-    })
+
+    await expect(loader.open()).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_STATUS',
+      phase: 'open',
+      reason: 'http-status',
+      status: 503,
+    } satisfies Partial<HttpFlvLoaderError>)
+    expect(body.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a response without a readable body as a non-recoverable open failure', async () => {
+    const loader = createLoader({ fetch: () => Promise.resolve(createResponse({ body: null })) })
+
+    await expect(loader.open()).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_BODY_UNAVAILABLE',
+      phase: 'open',
+      reason: undefined,
+    } satisfies Partial<HttpFlvLoaderError>)
+  })
+
+  it('wraps reader failures with read-error metadata', async () => {
+    const readError = new TypeError('stream failed')
+    const reader = new DeferredReader()
+    const loader = createLoader({ reader })
 
     await loader.open()
-    await loader.close()
-    await loader.close()
+    const reading = loader.read()
+    reader.reject(readError)
 
-    expect(loader.closed).toBe(true)
-    expect(reader.cancel).toHaveBeenCalledTimes(1)
+    await expect(reading).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_READ_FAILED',
+      phase: 'read',
+      reason: 'read-error',
+      cause: readError,
+    } satisfies Partial<HttpFlvLoaderError>)
+  })
+
+  it('reports the first stream EOF as unexpected', async () => {
+    const reader = new MockReader([])
+    const loader = createLoader({ reader })
+
+    await loader.open()
+
+    await expect(loader.read()).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_UNEXPECTED_EOF',
+      phase: 'read',
+      reason: 'unexpected-eof',
+    } satisfies Partial<HttpFlvLoaderError>)
     expect(reader.releaseLock).toHaveBeenCalledTimes(1)
   })
 
-  it('defers reads while paused and resumes without polling', async () => {
-    const reader = new MockReader([new Uint8Array([9])])
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions(),
-      fetch: () => Promise.resolve(createResponse({ body: new MockReadableStream(reader) })),
-      now: () => 1,
-    })
+  it('times out an active read with structured metadata', async () => {
+    const reader = new DeferredReader()
+    const loader = createLoader({ reader, readIdleTimeoutMs: 1_000 })
 
     await loader.open()
-    loader.pause()
-    const readPromise = loader.read()
-    await Promise.resolve()
-    expect(reader.read).not.toHaveBeenCalled()
+    const reading = loader.read()
+    const expectation = expect(reading).rejects.toMatchObject({
+      code: 'RIVMUX_HTTP_READ_TIMEOUT',
+      phase: 'read',
+      reason: 'read-timeout',
+    } satisfies Partial<HttpFlvLoaderError>)
+    await vi.advanceTimersByTimeAsync(1_000)
 
-    loader.resume()
-    await expect(readPromise).resolves.toMatchObject({ bytes: new Uint8Array([9]) })
-    expect(reader.read).toHaveBeenCalledTimes(1)
+    await expectation
   })
 
-  it('unblocks a paused read when closed', async () => {
-    const reader = new MockReader([new Uint8Array([1])])
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions(),
-      fetch: () => Promise.resolve(createResponse({ body: new MockReadableStream(reader) })),
-      now: () => 1,
-    })
+  it('does not count paused time toward an in-flight read timeout', async () => {
+    const reader = new DeferredReader()
+    const loader = createLoader({ reader, readIdleTimeoutMs: 1_000 })
+
+    await loader.open()
+    const reading = loader.read()
+    await vi.advanceTimersByTimeAsync(400)
+    loader.pause()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(vi.getTimerCount()).toBe(0)
+
+    loader.resume()
+    await vi.advanceTimersByTimeAsync(599)
+    let settled = false
+    const settlement = reading.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(reading).rejects.toMatchObject({ reason: 'read-timeout' })
+    await settlement
+  })
+
+  it('defers a new read while paused without starting a timeout', async () => {
+    const reader = new DeferredReader()
+    const loader = createLoader({ reader, readIdleTimeoutMs: 1_000 })
 
     await loader.open()
     loader.pause()
-    const readPromise = loader.read()
+    const reading = loader.read()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(reader.read).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+
+    loader.resume()
+    await Promise.resolve()
+    expect(reader.read).toHaveBeenCalledTimes(1)
+    reader.resolve(new Uint8Array([9]))
+    await expect(reading).resolves.toMatchObject({ bytes: new Uint8Array([9]) })
+  })
+
+  it('close cancels and releases a pending read immediately', async () => {
+    const reader = new DeferredReader()
+    const loader = createLoader({ reader })
+
+    await loader.open()
+    const reading = loader.read()
     await Promise.resolve()
     await loader.close()
 
-    await expect(readPromise).resolves.toBeNull()
-    expect(reader.read).not.toHaveBeenCalled()
+    await expect(reading).resolves.toBeNull()
+    expect(reader.cancel).toHaveBeenCalledTimes(1)
+    expect(reader.releaseLock).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('rejects non-ok HTTP status with a structured loader error', async () => {
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions({ maxAttempts: 1, backoffMs: 0 }),
-      fetch: () => Promise.resolve(createResponse({ ok: false, status: 503, statusText: 'Service Unavailable' })),
-      now: () => 1,
-    })
+  it('close cancels a pending fetch even when the fetch implementation ignores its signal', async () => {
+    const response = createDeferred<Response>()
+    const loader = createLoader({ fetch: () => response.promise })
 
-    await expect(loader.open()).rejects.toMatchObject({
-      name: 'HttpFlvLoaderError',
-      code: 'RIVMUX_HTTP_STATUS',
-      status: 503,
-    } satisfies Partial<HttpFlvLoaderError>)
-  })
+    const opening = loader.open()
+    await Promise.resolve()
+    await loader.close()
 
-  it('rejects a response without ReadableStream body', async () => {
-    const loader = new HttpFlvLoader({
-      url: 'https://example.test/live.flv',
-      network: createNetworkOptions({ maxAttempts: 1, backoffMs: 0 }),
-      fetch: () => Promise.resolve(createResponse({ body: null })),
-      now: () => 1,
-    })
+    await expect(opening).rejects.toMatchObject({ name: 'AbortError' })
 
-    await expect(loader.open()).rejects.toMatchObject({
-      name: 'HttpFlvLoaderError',
-      code: 'RIVMUX_HTTP_BODY_UNAVAILABLE',
-    } satisfies Partial<HttpFlvLoaderError>)
+    const lateBody = new MockReadableStream(new MockReader([]))
+    response.resolve(createResponse({ body: lateBody }))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(lateBody.cancel).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -136,12 +215,27 @@ class MockReader implements ReadableStreamDefaultReader<Uint8Array> {
   readonly read = vi.fn((): Promise<ReadableStreamReadResult<Uint8Array>> => {
     const chunk = this.chunks[this.offset]
     this.offset += 1
-
     return Promise.resolve(chunk === undefined ? { done: true, value: undefined } : { done: false, value: chunk })
   })
   private offset = 0
 
   constructor(private readonly chunks: Uint8Array[]) {}
+}
+
+class DeferredReader implements ReadableStreamDefaultReader<Uint8Array> {
+  readonly closed: Promise<undefined> = Promise.resolve(undefined)
+  readonly cancel = vi.fn(() => Promise.resolve())
+  readonly releaseLock = vi.fn()
+  readonly read = vi.fn(() => this.result.promise)
+  private readonly result = createDeferred<ReadableStreamReadResult<Uint8Array>>()
+
+  resolve(bytes: Uint8Array): void {
+    this.result.resolve({ done: false, value: bytes })
+  }
+
+  reject(error: unknown): void {
+    this.result.reject(error)
+  }
 }
 
 class MockReadableStream implements Pick<ReadableStream<Uint8Array>, 'cancel' | 'getReader'> {
@@ -154,11 +248,22 @@ class MockReadableStream implements Pick<ReadableStream<Uint8Array>, 'cancel' | 
   }
 }
 
-function createNetworkOptions(retry: NormalizedNetworkOptions['retry'] = { maxAttempts: 3, backoffMs: 0 }): NormalizedNetworkOptions {
+function createLoader(input: { reader?: ReadableStreamDefaultReader<Uint8Array>; fetch?: typeof fetch; readIdleTimeoutMs?: number }): HttpFlvLoader {
+  const reader = input.reader ?? new MockReader([])
+  return new HttpFlvLoader({
+    url: 'https://example.test/live.flv',
+    network: createNetworkOptions(input.readIdleTimeoutMs),
+    fetch: input.fetch ?? (() => Promise.resolve(createResponse({ body: new MockReadableStream(reader) }))),
+    now: () => Date.now(),
+  })
+}
+
+function createNetworkOptions(readIdleTimeoutMs = 10_000): NormalizedNetworkOptions {
   return {
     headers: { 'X-Test': '1' },
     credentials: 'include',
-    retry,
+    readIdleTimeoutMs,
+    retry: { maxAttempts: 3, backoffMs: 500, maxBackoffMs: 8_000, jitterRatio: 0.2 },
   }
 }
 
@@ -176,4 +281,14 @@ function createResponse(input: {
     body: input.body === undefined ? null : (input.body as ReadableStream<Uint8Array> | null),
     headers: new Headers(input.contentLength === undefined ? undefined : { 'Content-Length': input.contentLength }),
   } as Response
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
 }

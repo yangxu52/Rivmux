@@ -17,9 +17,12 @@ export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   network: {
     headers: {},
     credentials: 'same-origin',
+    readIdleTimeoutMs: 10_000,
     retry: {
       maxAttempts: 3,
       backoffMs: 500,
+      maxBackoffMs: 8_000,
+      jitterRatio: 0.2,
     },
   },
   runtime: {
@@ -66,6 +69,7 @@ export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): Norma
 
 function validateNormalizedOptions(options: NormalizedRivmuxPlayerOptions): void {
   validateLatencyOptions(options)
+  validateNetworkOptions(options)
   validateRuntimeOptions(options)
 }
 
@@ -84,6 +88,24 @@ function validateLatencyOptions(options: NormalizedRivmuxPlayerOptions): void {
 
   if (latency.maxForwardBuffer < latency.target) {
     throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', 'latency.maxForwardBuffer must be greater than or equal to latency.target.')
+  }
+}
+
+function validateNetworkOptions(options: NormalizedRivmuxPlayerOptions): void {
+  const network = options.network
+  const retry = network.retry
+
+  assertPositiveInteger(network.readIdleTimeoutMs, 'network.readIdleTimeoutMs')
+  assertPositiveInteger(retry.maxAttempts, 'network.retry.maxAttempts')
+  assertNonNegativeInteger(retry.backoffMs, 'network.retry.backoffMs')
+  assertNonNegativeInteger(retry.maxBackoffMs, 'network.retry.maxBackoffMs')
+
+  if (retry.maxBackoffMs < retry.backoffMs) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_NETWORK_OPTION', 'network.retry.maxBackoffMs must be greater than or equal to network.retry.backoffMs.')
+  }
+
+  if (!Number.isFinite(retry.jitterRatio) || retry.jitterRatio < 0 || retry.jitterRatio > 1) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_NETWORK_OPTION', 'network.retry.jitterRatio must be a finite number between 0 and 1.')
   }
 }
 
@@ -114,6 +136,18 @@ function assertFiniteNonNegativeLatency(value: number, field: string): void {
 function assertFinitePositiveLatency(value: number, field: string): void {
   if (!Number.isFinite(value) || value <= 0) {
     throwOptionError('runtime', 'RIVMUX_INVALID_LATENCY_OPTION', `${field} must be a finite number greater than 0.`)
+  }
+}
+
+function assertPositiveInteger(value: number, field: string): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_NETWORK_OPTION', `${field} must be an integer greater than or equal to 1.`)
+  }
+}
+
+function assertNonNegativeInteger(value: number, field: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throwOptionError('runtime', 'RIVMUX_INVALID_NETWORK_OPTION', `${field} must be an integer greater than or equal to 0.`)
   }
 }
 
