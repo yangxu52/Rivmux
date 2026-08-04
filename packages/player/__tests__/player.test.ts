@@ -7,6 +7,7 @@ import type { WorkerLike } from '../src/worker-client'
 
 describe('RivmuxPlayer', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -146,6 +147,127 @@ describe('RivmuxPlayer', () => {
     expect(video.srcObject).toStrictEqual({ id: 'replacement' })
     expect(reconnecting).toHaveBeenCalledWith({ attempt: 2, maxAttempts: 3, delayMs: 500, reason: 'read-error' })
     expect(recovered).toHaveBeenCalledWith({ attempt: 2, downtimeMs: 150 })
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
+  it('waits for the worker started acknowledgement and shares one concurrent start operation', async () => {
+    const worker = new MockWorker(false)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+
+    const attach = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+
+    const firstStart = player.start()
+    const secondStart = player.start()
+    expect(secondStart).toBe(firstStart)
+    expect(worker.commands.filter((command) => command.type === 'start')).toHaveLength(1)
+    expect(worker.commands.some((command) => command.type === 'video-state')).toBe(false)
+
+    let settled = false
+    void firstStart.then(() => {
+      settled = true
+    })
+    await flushPromises()
+    expect(settled).toBe(false)
+
+    worker.emit({ type: 'started' })
+    await Promise.all([firstStart, secondStart])
+    expect(worker.commands.filter((command) => command.type === 'video-state')).toHaveLength(1)
+
+    await expect(player.start()).resolves.toBeUndefined()
+    expect(worker.commands.filter((command) => command.type === 'start')).toHaveLength(1)
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
+  it.each(['stop', 'destroy'] as const)('rejects a pending start when %s completes without reviving from a late acknowledgement', async (command) => {
+    const worker = new MockWorker(false)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+
+    const attach = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+
+    const start = player.start()
+    const ending = command === 'stop' ? player.stop() : player.destroy()
+    worker.emit({ type: command === 'stop' ? 'stopped' : 'destroyed' })
+
+    await expect(start).rejects.toMatchObject({ name: 'RIVMUX_START_CANCELLED', message: `Start was cancelled by ${command}.` })
+    await expect(ending).resolves.toBeUndefined()
+    worker.emit({ type: 'started' })
+    await flushPromises()
+    expect(worker.commands.filter((entry) => entry.type === 'video-state')).toHaveLength(0)
+
+    if (command === 'stop') {
+      const destroy = player.destroy()
+      worker.emit({ type: 'destroyed' })
+      await destroy
+    }
+  })
+
+  it('rejects a pending start with the terminal PlayerError and emits that error once', async () => {
+    const worker = new MockWorker(false)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const errors = vi.fn()
+    player.on('error', errors)
+
+    const attach = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+
+    const start = player.start()
+    worker.emit({
+      type: 'error',
+      error: { kind: 'network', code: 'RIVMUX_RECONNECT_EXHAUSTED', message: 'Reconnect attempts exhausted.', terminal: true },
+    })
+
+    await expect(start).rejects.toMatchObject({ name: 'RIVMUX_RECONNECT_EXHAUSTED', message: 'Reconnect attempts exhausted.' })
+    expect(errors).toHaveBeenCalledTimes(1)
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
+  it('rejects a timed-out start with a structured public error', async () => {
+    vi.useFakeTimers()
+    const worker = new MockWorker(false)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const errors = vi.fn()
+    player.on('error', errors)
+
+    const attach = player.attach(createMockVideo())
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+
+    const start = player.start()
+    const rejection = expect(start).rejects.toMatchObject({ name: 'RIVMUX_START_TIMEOUT', message: 'Timed out waiting for worker start.' })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await rejection
+    expect(errors).toHaveBeenCalledOnce()
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({ code: 'RIVMUX_START_TIMEOUT', terminal: true }))
     const destroy = player.destroy()
     worker.emit({ type: 'destroyed' })
     await destroy
@@ -439,12 +561,13 @@ describe('RivmuxPlayer', () => {
     await initialStop
 
     const restart = player.start()
+    const restartRejection = expect(restart).rejects.toMatchObject({ name: 'RIVMUX_START_CANCELLED', message: 'Start was cancelled by stop.' })
     worker.emit({ type: 'media-source-handle', handle: { id: 'restart' } as unknown as MediaSourceHandle })
     const stop = player.stop()
     const repeatedStop = player.stop()
     await expect(player.start()).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_STOPPING' })
     await expect(player.attach(video)).rejects.toMatchObject({ name: 'RIVMUX_PLAYER_STOPPING' })
-    await restart
+    await restartRejection
     expect(worker.commands.slice(-2).map((command) => command.type)).toStrictEqual(['attach-media-source', 'stop'])
 
     worker.emit({ type: 'stopped' })
@@ -466,6 +589,8 @@ class MockWorker implements WorkerLike {
   terminated = false
   private messageListener?: EventListener
   private errorListener?: EventListener
+
+  constructor(private readonly acknowledgeStart = true) {}
 
   addEventListener(type: string, listener: EventListener): void {
     if (type === 'message') {
@@ -489,6 +614,9 @@ class MockWorker implements WorkerLike {
 
   postMessage(command: { type: string; [key: string]: unknown }): void {
     this.commands.push(command)
+    if (command.type === 'start' && this.acknowledgeStart) {
+      this.emit({ type: 'started' })
+    }
   }
 
   terminate(): void {

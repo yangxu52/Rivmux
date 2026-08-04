@@ -183,6 +183,7 @@ export class RuntimeWorker {
     }
 
     if (this.state === 'started') {
+      this.post({ type: 'started' })
       return
     }
 
@@ -213,7 +214,13 @@ export class RuntimeWorker {
     }
     this.startStatsTimer()
     this.postStats()
-    this.startLoader(context)
+    if (!this.startLoader(context)) {
+      return
+    }
+    if (!this.isLifecycleContextCurrent(context) || this.state !== 'started') {
+      return
+    }
+    this.post({ type: 'started' })
   }
 
   private async stop(): Promise<void> {
@@ -242,12 +249,12 @@ export class RuntimeWorker {
     this.port.close()
   }
 
-  private startLoader(context: LifecycleCommandContext): void {
+  private startLoader(context: LifecycleCommandContext): boolean {
     const options = this.options
     const url = this.url
     if (options === undefined || url === undefined) {
       this.fail('runtime', 'RIVMUX_WORKER_NOT_INITIALIZED', 'Worker must be initialized before loader start.', true)
-      return
+      return false
     }
 
     this.session.runLoader(
@@ -257,6 +264,7 @@ export class RuntimeWorker {
       },
       context
     )
+    return true
   }
 
   private async closeLoader(): Promise<void> {

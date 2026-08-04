@@ -93,6 +93,7 @@ describe('RuntimeWorker', () => {
 
     expect(loader.opened).toBe(true)
     expect(loader.closed).toBe(true)
+    expect(port.messages).toContainEqual({ type: 'started' })
     expect(port.messages).toContainEqual({
       type: 'playback-control',
       action: { type: 'play', reason: 'startup-buffer-ready' },
@@ -124,6 +125,52 @@ describe('RuntimeWorker', () => {
       }),
     })
     expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 80, keyframe: true, bytes: new Uint8Array([4, 5, 6]) }])
+  })
+
+  it('acknowledges start after scheduling loader consumption without waiting for the network or media', async () => {
+    const port = new MockPort()
+    const loader = new DeferredOpenLoader()
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForOpen()
+
+    expect(port.messages.at(-1)).toStrictEqual({ type: 'started' })
+    expect(port.messages.some((message) => message.type === 'media-info')).toBe(false)
+    expect(port.messages.some((message) => message.type === 'error')).toBe(false)
+
+    await runtime.handleCommand({ type: 'stop' })
+    loader.rejectOpen(new Error('Late loader open failure.'))
+    await flushMicrotasks()
+  })
+
+  it('acknowledges repeated start without creating another Core or Loader', async () => {
+    const port = new MockPort()
+    const loader = new BlockingLoader()
+    const createLoader = vi.fn(() => loader)
+    const createTransmuxCore = vi.fn(() => createIdleTransmuxCore())
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader,
+      createTransmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await runtime.handleCommand({ type: 'start' })
+
+    expect(port.messages.filter((message) => message.type === 'started')).toStrictEqual([{ type: 'started' }, { type: 'started' }])
+    expect(createTransmuxCore).toHaveBeenCalledOnce()
+    expect(createLoader).toHaveBeenCalledOnce()
+
+    await runtime.handleCommand({ type: 'stop' })
   })
 
   it('flushes a pending fMP4 media batch to MSE after 125 ms', async () => {
@@ -179,6 +226,7 @@ describe('RuntimeWorker', () => {
     await runtime.handleCommand({ type: 'start' })
 
     expect(loader.opened).toBe(false)
+    expect(port.messages.some((message) => message.type === 'started')).toBe(false)
     expect(port.messages.at(-1)).toStrictEqual({
       type: 'error',
       error: {
@@ -206,6 +254,7 @@ describe('RuntimeWorker', () => {
     await runtime.handleCommand({ type: 'start' })
 
     expect(loader.opened).toBe(false)
+    expect(port.messages.some((message) => message.type === 'started')).toBe(false)
     expect(port.messages.at(-1)).toStrictEqual({
       type: 'error',
       error: {
@@ -244,6 +293,7 @@ describe('RuntimeWorker', () => {
     await Promise.all([startPromise, stopPromise])
 
     expect(loaders).toStrictEqual([])
+    expect(port.messages.some((message) => message.type === 'started')).toBe(false)
     expect(port.messages.at(-1)).toStrictEqual({ type: 'stopped' })
 
     deferredCore.resolve(createdCore)
@@ -274,6 +324,7 @@ describe('RuntimeWorker', () => {
     await Promise.all([startPromise, destroyPromise])
 
     expect(loaders).toStrictEqual([])
+    expect(port.messages.some((message) => message.type === 'started')).toBe(false)
     expect(port.messages.at(-1)).toStrictEqual({ type: 'destroyed' })
     expect(port.closed).toBe(true)
 

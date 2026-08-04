@@ -137,6 +137,111 @@ describe('WorkerClient', () => {
     expect(reportError).toHaveBeenCalledWith(fatalHookError)
     client.dispose()
   })
+
+  it('keeps start pending until started and clears its timeout before the hook runs', async () => {
+    vi.useFakeTimers()
+    const worker = new MockWorker()
+    let settled = false
+    const onMessage = vi.fn((message: WorkerMessage) => {
+      if (message.type === 'started') {
+        expect(settled).toBe(false)
+      }
+    })
+    const client = new WorkerClient(worker, { onMessage, onError: vi.fn() })
+    worker.emit({ type: 'worker-ready' })
+    const started = client.waitForStarted({ type: 'start' }).then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    worker.emit({ type: 'started' })
+    await started
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(settled).toBe(true)
+    expect(onMessage).toHaveBeenCalledWith({ type: 'started' })
+    client.dispose()
+  })
+
+  it('settles start before a throwing started hook and rejects a concurrent start request', async () => {
+    const reportError = vi.fn()
+    vi.stubGlobal('reportError', reportError)
+    const worker = new MockWorker()
+    const hookError = new Error('started hook failed')
+    const client = new WorkerClient(worker, {
+      onMessage: () => {
+        throw hookError
+      },
+      onError: vi.fn(),
+    })
+    worker.emit({ type: 'worker-ready' })
+
+    const started = client.waitForStarted({ type: 'start' })
+    const concurrent = client.waitForStarted({ type: 'start' })
+    const concurrentRejection = expect(concurrent).rejects.toMatchObject({ code: 'RIVMUX_START_IN_PROGRESS', terminal: false })
+    worker.emit({ type: 'started' })
+
+    await expect(started).resolves.toBeUndefined()
+    await concurrentRejection
+    expect(reportError).toHaveBeenCalledWith(hookError)
+    client.dispose()
+  })
+
+  it('times out a pending start with a fatal structured error', async () => {
+    vi.useFakeTimers()
+    const worker = new MockWorker()
+    const onError = vi.fn()
+    const client = new WorkerClient(worker, { onMessage: vi.fn(), onError })
+    worker.emit({ type: 'worker-ready' })
+    const started = client.waitForStarted({ type: 'start' })
+    const rejection = expect(started).rejects.toMatchObject({ code: 'RIVMUX_START_TIMEOUT', terminal: true })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await rejection
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'RIVMUX_START_TIMEOUT' }))
+    client.dispose()
+  })
+
+  it('rejects a pending start with the original terminal worker error', async () => {
+    const worker = new MockWorker()
+    const client = createClient(worker)
+    worker.emit({ type: 'worker-ready' })
+    const terminalError = { kind: 'network' as const, code: 'RIVMUX_HTTP_STATUS', message: 'failed', terminal: true }
+    const started = client.waitForStarted({ type: 'start' })
+    const rejection = expect(started).rejects.toMatchObject(terminalError)
+
+    worker.emit({ type: 'error', error: terminalError })
+
+    await rejection
+    client.dispose()
+  })
+
+  it.each(['stopped', 'destroyed'] as const)('cancels a pending start when worker reports %s', async (type) => {
+    const worker = new MockWorker()
+    const client = createClient(worker)
+    worker.emit({ type: 'worker-ready' })
+    const started = client.waitForStarted({ type: 'start' })
+    const rejection = expect(started).rejects.toMatchObject({ code: 'RIVMUX_START_CANCELLED', terminal: false })
+
+    worker.emit({ type })
+
+    await rejection
+    client.dispose()
+  })
+
+  it('rejects a pending start when disposed', async () => {
+    const worker = new MockWorker()
+    const client = createClient(worker)
+    worker.emit({ type: 'worker-ready' })
+    const started = client.waitForStarted({ type: 'start' })
+    const rejection = expect(started).rejects.toMatchObject({ code: 'RIVMUX_WORKER_DISPOSED', terminal: true })
+
+    client.dispose()
+
+    await rejection
+  })
 })
 
 function createClient(worker: MockWorker): WorkerClient {

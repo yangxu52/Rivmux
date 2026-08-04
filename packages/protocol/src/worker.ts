@@ -19,6 +19,7 @@ export type WorkerMessage =
   | { type: 'worker-ready' }
   | { type: 'ready' }
   | { type: 'media-source-handle'; handle: MediaSourceHandle }
+  | { type: 'started' }
   | { type: 'media-info'; mediaInfo: MediaInfo }
   | { type: 'stats'; stats: PlayerStats }
   | { type: 'warning'; warning: PlayerWarning }

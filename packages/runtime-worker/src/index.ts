@@ -39,11 +39,13 @@ export class WorkerClient {
     this.failClient(error)
   }
   private pendingAttach?: PendingRequest
+  private pendingStart?: PendingRequest
   private pendingStop?: PendingRequest
   private pendingDestroy?: PendingRequest
   private workerReady = false
   private queuedCommands: WorkerCommand[] = []
   private attachTimer?: ReturnType<typeof setTimeout>
+  private startedTimer?: ReturnType<typeof setTimeout>
   private stoppedTimer?: ReturnType<typeof setTimeout>
   private destroyedTimer?: ReturnType<typeof setTimeout>
 
@@ -87,6 +89,18 @@ export class WorkerClient {
     })
   }
 
+  waitForStarted(command: WorkerCommand): Promise<void> {
+    if (this.pendingStart !== undefined) {
+      return Promise.reject(createRuntimeWorkerError('RIVMUX_START_IN_PROGRESS', 'A start request is already pending.', false))
+    }
+
+    return new Promise((resolve, reject) => {
+      this.pendingStart = { resolve, reject }
+      this.startedTimer = this.startTimeout('RIVMUX_START_TIMEOUT', 'Timed out waiting for worker start.', reject)
+      this.post(command)
+    })
+  }
+
   waitForDestroyed(command: WorkerCommand): Promise<void> {
     if (this.pendingDestroy !== undefined) {
       return Promise.reject(createRuntimeWorkerError('RIVMUX_DESTROY_IN_PROGRESS', 'A destroy request is already pending.', false))
@@ -118,8 +132,15 @@ export class WorkerClient {
       return
     }
 
+    if (message.type === 'started') {
+      this.resolveStart()
+      this.notifyMessage(message)
+      return
+    }
+
     if (message.type === 'stopped') {
       this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by stop.', false))
+      this.rejectStart(createRuntimeWorkerError('RIVMUX_START_CANCELLED', 'Start was cancelled by stop.', false))
       this.resolveStop()
       this.notifyMessage(message)
       return
@@ -128,6 +149,7 @@ export class WorkerClient {
     if (message.type === 'destroyed') {
       this.resolveDestroy()
       this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by destroy.', false))
+      this.rejectStart(createRuntimeWorkerError('RIVMUX_START_CANCELLED', 'Start was cancelled by destroy.', false))
       this.rejectStop(createRuntimeWorkerError('RIVMUX_STOP_CANCELLED', 'Stop was superseded by destroy.', false))
       this.notifyMessage(message)
       return
@@ -162,6 +184,12 @@ export class WorkerClient {
     this.pendingStop = undefined
   }
 
+  private resolveStart(): void {
+    this.clearStartedTimer()
+    this.pendingStart?.resolve()
+    this.pendingStart = undefined
+  }
+
   private resolveDestroy(): void {
     this.clearDestroyedTimer()
     this.pendingDestroy?.resolve()
@@ -180,15 +208,24 @@ export class WorkerClient {
     this.pendingStop = undefined
   }
 
+  private rejectStart(error: PlayerError): void {
+    this.clearStartedTimer()
+    this.pendingStart?.reject(error)
+    this.pendingStart = undefined
+  }
+
   private rejectAll(error: PlayerError): void {
     this.queuedCommands = []
     this.clearAttachTimer()
+    this.clearStartedTimer()
     this.clearStoppedTimer()
     this.clearDestroyedTimer()
     this.pendingAttach?.reject(error)
+    this.pendingStart?.reject(error)
     this.pendingStop?.reject(error)
     this.pendingDestroy?.reject(error)
     this.pendingAttach = undefined
+    this.pendingStart = undefined
     this.pendingStop = undefined
     this.pendingDestroy = undefined
   }
@@ -242,6 +279,13 @@ export class WorkerClient {
     if (this.stoppedTimer !== undefined) {
       clearTimeout(this.stoppedTimer)
       this.stoppedTimer = undefined
+    }
+  }
+
+  private clearStartedTimer(): void {
+    if (this.startedTimer !== undefined) {
+      clearTimeout(this.startedTimer)
+      this.startedTimer = undefined
     }
   }
 

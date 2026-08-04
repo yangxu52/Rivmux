@@ -74,6 +74,12 @@ const player = new RivmuxPlayer(url, options)
 | `player.on(type, listener)`       | Subscribes to a player event.                                                                            |
 | `player.off(type, listener)`      | Removes a previously registered listener.                                                                |
 
+`attach()` 完成只表示媒体源句柄已经连接；`start()` 完成只表示 Worker 已建立本次启动所需的内部加载、转封装和 MSE 会话。两者都不表示已经解析出媒体信息、已经追加首个媒体片段，也不表示 `<video>` 已触发 `canplay` 或开始播放。请通过 `mediaInfo`、`stats`、`error` 和视频元素事件观察后续结果。
+
+同一启动过程中的并发 `start()` 调用会等待同一个操作，不会重复发送启动命令。播放器已经启动后再次调用 `start()` 会直接完成。若 `stop()` 或 `destroy()` 在启动确认前开始，待处理的 `start()` 会以 `RIVMUX_START_CANCELLED` 拒绝，而停止或销毁操作仍会正常完成。终止错误会使 `start()` 以相同错误码拒绝。
+
+上述规则收紧了旧版本中“发送启动命令后立即完成”的时序；依赖旧时序的调用方应改为等待 `start()`，并将媒体就绪逻辑放到对应事件中。
+
 ## Options
 
 All options are optional. Missing fields are merged with

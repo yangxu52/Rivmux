@@ -16,7 +16,7 @@ import type {
 } from '@rivmux/protocol'
 import type { RuntimeWorkerFactory } from '@rivmux/runtime-worker'
 
-type PlayerState = 'idle' | 'attached' | 'started' | 'stopping' | 'stopped' | 'fatal-error' | 'destroying' | 'destroyed'
+type PlayerState = 'idle' | 'attached' | 'starting' | 'started' | 'stopping' | 'stopped' | 'fatal-error' | 'destroying' | 'destroyed'
 
 export type RivmuxPlayerInternals = {
   workerFactory?: RuntimeWorkerFactory
@@ -45,6 +45,7 @@ export class RivmuxPlayer {
   private state: PlayerState = 'idle'
   private lifecycleGeneration = 0
   private terminalError?: PlayerError
+  private startPromise?: Promise<void>
   private stopPromise?: Promise<void>
   private destroyPromise?: Promise<void>
 
@@ -91,34 +92,61 @@ export class RivmuxPlayer {
   }
 
   /**
-   * Starts loading, transmuxing, buffering, and playback control.
+   * Waits until the worker has created the transmux core and scheduled stream
+   * consumption for this playback session.
    *
-   * Requires a successful `attach(video)` call first.
+   * This does not wait for media data, `canplay`, or `video.play()`. Requires a
+   * successful `attach(video)` call first.
    */
-  async start(): Promise<void> {
-    this.assertOperational('start')
-    const lifecycleGeneration = this.lifecycleGeneration
+  start(): Promise<void> {
+    try {
+      this.assertOperational('start')
+    } catch (cause) {
+      return Promise.reject(cause)
+    }
 
     if (!this.playback.attached || this.workerClient === undefined) {
-      throw playerErrorToException(createPlayerError('runtime', 'RIVMUX_START_REQUIRES_ATTACH', 'start() requires a previously attached video element.', false))
+      return Promise.reject(
+        playerErrorToException(createPlayerError('runtime', 'RIVMUX_START_REQUIRES_ATTACH', 'start() requires a previously attached video element.', false))
+      )
     }
 
     if (this.state === 'started') {
-      return
+      return Promise.resolve()
     }
 
-    if (this.state === 'stopped') {
-      await this.workerClient.waitForMediaSourceHandle({ type: 'attach-media-source' })
-      if (!this.isLifecycleOperationCurrent(lifecycleGeneration)) {
-        return
+    if (this.startPromise !== undefined) {
+      return this.startPromise
+    }
+
+    const lifecycleGeneration = this.lifecycleGeneration
+    const previousState = this.state
+    this.state = 'starting'
+    const starting = this.performStart(this.workerClient, lifecycleGeneration, previousState === 'stopped').finally(() => {
+      if (this.startPromise === starting) {
+        this.startPromise = undefined
       }
-      this.state = 'attached'
+    })
+    this.startPromise = starting
+    return starting
+  }
+
+  private async performStart(workerClient: WorkerClient, lifecycleGeneration: number, restart: boolean): Promise<void> {
+    try {
+      if (restart) {
+        await workerClient.waitForMediaSourceHandle({ type: 'attach-media-source' })
+        this.assertStartOperationCurrent(lifecycleGeneration)
+      }
+
+      await workerClient.waitForStarted({ type: 'start' })
+      this.assertStartOperationCurrent(lifecycleGeneration)
+    } catch (cause) {
+      if (this.isLifecycleOperationCurrent(lifecycleGeneration) && this.state === 'starting') {
+        this.state = restart ? 'stopped' : 'attached'
+      }
+      throw toPublicStartError(cause)
     }
 
-    if (!this.isLifecycleOperationCurrent(lifecycleGeneration)) {
-      return
-    }
-    this.workerClient.post({ type: 'start' })
     this.state = 'started'
     this.startVideoStateReporting()
   }
@@ -271,6 +299,8 @@ export class RivmuxPlayer {
       case 'media-source-handle':
         this.attachMediaSourceHandle(message.handle)
         return
+      case 'started':
+        return
       case 'media-info':
         this.events.emit('mediaInfo', message.mediaInfo)
         return
@@ -381,6 +411,30 @@ export class RivmuxPlayer {
   private isLifecycleOperationCurrent(generation: number): boolean {
     return generation === this.lifecycleGeneration && this.state !== 'fatal-error' && this.state !== 'destroying' && this.state !== 'destroyed'
   }
+
+  private assertStartOperationCurrent(generation: number): void {
+    if (this.isLifecycleOperationCurrent(generation) && this.state === 'starting') {
+      return
+    }
+
+    const action = this.state === 'destroying' || this.state === 'destroyed' ? 'destroy' : 'stop'
+    throw createPlayerError('runtime', 'RIVMUX_START_CANCELLED', `Start was cancelled by ${action}.`, false)
+  }
+}
+
+function toPublicStartError(cause: unknown): Error {
+  return isPlayerError(cause) ? playerErrorToException(cause) : cause instanceof Error ? cause : new Error(String(cause))
+}
+
+function isPlayerError(value: unknown): value is PlayerError {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const candidate = value as Partial<PlayerError>
+  return (
+    typeof candidate.kind === 'string' && typeof candidate.code === 'string' && typeof candidate.message === 'string' && typeof candidate.terminal === 'boolean'
+  )
 }
 
 function createPlayerId(): string {
