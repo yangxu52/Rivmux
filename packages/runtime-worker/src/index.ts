@@ -112,16 +112,16 @@ export class WorkerClient {
       return
     }
 
-    this.hooks.onMessage(message)
-
     if (message.type === 'media-source-handle') {
       this.resolveAttach()
+      this.notifyMessage(message)
       return
     }
 
     if (message.type === 'stopped') {
       this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by stop.', false))
       this.resolveStop()
+      this.notifyMessage(message)
       return
     }
 
@@ -129,12 +129,17 @@ export class WorkerClient {
       this.resolveDestroy()
       this.rejectAttach(createRuntimeWorkerError('RIVMUX_ATTACH_CANCELLED', 'Media source attachment was cancelled by destroy.', false))
       this.rejectStop(createRuntimeWorkerError('RIVMUX_STOP_CANCELLED', 'Stop was superseded by destroy.', false))
+      this.notifyMessage(message)
       return
     }
 
     if (message.type === 'error') {
       this.rejectPendingForWorkerError(message.error)
+      this.notifyMessage(message)
+      return
     }
+
+    this.notifyMessage(message)
   }
 
   private rejectPendingForWorkerError(error: PlayerError): void {
@@ -211,7 +216,19 @@ export class WorkerClient {
 
   private failClient(error: PlayerError): void {
     this.rejectAll(error)
-    this.hooks.onError(error)
+    try {
+      this.hooks.onError(error)
+    } catch (hookError) {
+      reportHookError(hookError)
+    }
+  }
+
+  private notifyMessage(message: WorkerMessage): void {
+    try {
+      this.hooks.onMessage(message)
+    } catch (error) {
+      reportHookError(error)
+    }
   }
 
   private clearAttachTimer(): void {
@@ -233,6 +250,24 @@ export class WorkerClient {
       clearTimeout(this.destroyedTimer)
       this.destroyedTimer = undefined
     }
+  }
+}
+
+function reportHookError(error: unknown): void {
+  try {
+    const reportError = (globalThis as typeof globalThis & { reportError?: (error: unknown) => void }).reportError
+    if (typeof reportError === 'function') {
+      reportError(error)
+      return
+    }
+  } catch {
+    // Fall through to the non-throwing console fallback.
+  }
+
+  try {
+    globalThis.console?.error(error)
+  } catch {
+    // Hook error reporting must never affect worker lifecycle state.
   }
 }
 

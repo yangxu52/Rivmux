@@ -212,6 +212,8 @@ player.on('destroyed', () => {})
 | `stopped`      | `undefined`     | 播放已停止，媒体源已解绑。                                         |
 | `destroyed`    | `undefined`     | Worker runtime 已销毁。                                            |
 
+用户事件监听器中的异常属于宿主应用异常，不属于 Rivmux 播放错误，也不会转换为 `PlayerError`。单个监听器抛出异常时，其他监听器仍会继续执行，`stop()`、`destroy()` 等生命周期 Promise 也会按内部状态正常完成。Rivmux 会优先通过平台的 `globalThis.reportError()` 报告该异常；平台不支持时使用 `console.error()` 降级报告。
+
 ## 直播连接恢复
 
 Rivmux 会为以下直播网络故障重建 Loader、转封装核心和 MSE 播放会话：

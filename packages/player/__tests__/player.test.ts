@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RivmuxPlayer } from '../src/index'
 
@@ -6,6 +6,10 @@ import type { WorkerMessage } from '@rivmux/protocol'
 import type { WorkerLike } from '../src/worker-client'
 
 describe('RivmuxPlayer', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('attaches, starts, stops, and destroys through an isolated worker', async () => {
     const worker = new MockWorker()
     const video = createMockVideo()
@@ -220,6 +224,80 @@ describe('RivmuxPlayer', () => {
     worker.emit({ type: 'destroyed' })
     await destroyPromise
     expect(worker.terminated).toBe(true)
+  })
+
+  it('settles stop and destroy when their event listeners throw', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const reported: unknown[] = []
+    vi.stubGlobal('reportError', (error: unknown) => reported.push(error))
+    player.on('stopped', () => {
+      throw new Error('stopped listener failed')
+    })
+    player.on('destroyed', () => {
+      throw new Error('destroyed listener failed')
+    })
+
+    const attach = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+    await player.start()
+
+    const stop = player.stop()
+    worker.emit({ type: 'stopped' })
+    await expect(stop).resolves.toBeUndefined()
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await expect(destroy).resolves.toBeUndefined()
+    expect(worker.terminated).toBe(true)
+    expect(reported).toHaveLength(2)
+  })
+
+  it('does not convert a throwing error listener into another PlayerError and still destroys cleanly', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const listenerFailure = new Error('error listener failed')
+    const reported = vi.fn()
+    const followingListener = vi.fn()
+    vi.stubGlobal('reportError', reported)
+    player.on('error', () => {
+      throw listenerFailure
+    })
+    player.on('error', followingListener)
+
+    const attach = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+    await player.start()
+    const terminalError = {
+      kind: 'network' as const,
+      code: 'RIVMUX_HTTP_STATUS',
+      message: 'HTTP Fetch loader failed.',
+      terminal: true,
+    }
+
+    worker.emit({ type: 'error', error: terminalError })
+
+    expect(followingListener).toHaveBeenCalledOnce()
+    expect(followingListener).toHaveBeenCalledWith(terminalError)
+    expect(reported).toHaveBeenCalledOnce()
+    expect(reported).toHaveBeenCalledWith(listenerFailure)
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await expect(destroy).resolves.toBeUndefined()
+    expect(worker.terminated).toBe(true)
+    expect(video.srcObject).toBeNull()
   })
 
   it('finishes local destroy cleanup when the worker fails before acknowledging destroy', async () => {

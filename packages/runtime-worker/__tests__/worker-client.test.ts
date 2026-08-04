@@ -8,6 +8,8 @@ import type { WorkerLike } from '../src/index'
 describe('WorkerClient', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('cancels a pending attachment when stop completes', async () => {
@@ -57,6 +59,82 @@ describe('WorkerClient', () => {
     await stopRejection
     expect(onError).toHaveBeenCalledOnce()
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'RIVMUX_STOP_TIMEOUT', terminal: true }))
+    client.dispose()
+  })
+
+  it.each(['media-source-handle', 'stopped', 'destroyed'] as const)('settles a pending %s request before a throwing message hook', async (type) => {
+    const reportError = vi.fn()
+    vi.stubGlobal('reportError', reportError)
+    const worker = new MockWorker()
+    const hookError = new Error(`${type} hook failed`)
+    const client = new WorkerClient(worker, {
+      onMessage: () => {
+        throw hookError
+      },
+      onError: vi.fn(),
+    })
+    worker.emit({ type: 'worker-ready' })
+
+    const pending =
+      type === 'media-source-handle'
+        ? client.waitForMediaSourceHandle({ type: 'attach-media-source' })
+        : type === 'stopped'
+          ? client.waitForStopped({ type: 'stop' })
+          : client.waitForDestroyed({ type: 'destroy' })
+    worker.emit(type === 'media-source-handle' ? { type, handle: {} as MediaSourceHandle } : { type })
+
+    await expect(pending).resolves.toBeUndefined()
+    expect(reportError).toHaveBeenCalledWith(hookError)
+    client.dispose()
+  })
+
+  it('rejects pending requests before reporting a terminal error to a throwing hook', async () => {
+    const reportError = vi.fn()
+    vi.stubGlobal('reportError', reportError)
+    const worker = new MockWorker()
+    const hookError = new Error('error hook failed')
+    const client = new WorkerClient(worker, {
+      onMessage: () => {
+        throw hookError
+      },
+      onError: vi.fn(),
+    })
+    worker.emit({ type: 'worker-ready' })
+    const attach = client.waitForMediaSourceHandle({ type: 'attach-media-source' })
+    const terminalError = { kind: 'network' as const, code: 'RIVMUX_HTTP_STATUS', message: 'failed', terminal: true }
+
+    worker.emit({ type: 'error', error: terminalError })
+
+    await expect(attach).rejects.toMatchObject(terminalError)
+    expect(reportError).toHaveBeenCalledWith(hookError)
+    client.dispose()
+  })
+
+  it('isolates ordinary message and fatal worker hooks', async () => {
+    vi.useFakeTimers()
+    const reportError = vi.fn()
+    vi.stubGlobal('reportError', reportError)
+    const worker = new MockWorker()
+    const messageError = new Error('ordinary hook failed')
+    const fatalHookError = new Error('fatal hook failed')
+    const client = new WorkerClient(worker, {
+      onMessage: () => {
+        throw messageError
+      },
+      onError: () => {
+        throw fatalHookError
+      },
+    })
+    worker.emit({ type: 'worker-ready' })
+
+    expect(() => worker.emit({ type: 'ready' })).not.toThrow()
+    const stop = client.waitForStopped({ type: 'stop' })
+    const rejection = expect(stop).rejects.toMatchObject({ code: 'RIVMUX_STOP_TIMEOUT' })
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    await rejection
+    expect(reportError).toHaveBeenCalledWith(messageError)
+    expect(reportError).toHaveBeenCalledWith(fatalHookError)
     client.dispose()
   })
 })

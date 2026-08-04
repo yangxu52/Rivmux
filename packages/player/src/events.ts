@@ -21,11 +21,33 @@ export class PlayerEventEmitter {
 
   emit<T extends PlayerEventType>(type: T, payload: PlayerEventMap[T]): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener(payload)
+      try {
+        listener(payload)
+      } catch (error) {
+        reportListenerError(error)
+      }
     }
   }
 
   clear(): void {
     this.listeners.clear()
+  }
+}
+
+function reportListenerError(error: unknown): void {
+  try {
+    const reportError = (globalThis as typeof globalThis & { reportError?: (error: unknown) => void }).reportError
+    if (typeof reportError === 'function') {
+      reportError(error)
+      return
+    }
+  } catch {
+    // Fall through to the non-throwing console fallback.
+  }
+
+  try {
+    globalThis.console?.error(error)
+  } catch {
+    // Error reporting must never affect player behavior.
   }
 }
