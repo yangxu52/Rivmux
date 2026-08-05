@@ -16,6 +16,37 @@ describe('LatencyController', () => {
     })
   })
 
+  it('never requests startup playback when autoPlay is disabled', () => {
+    const controller = new LatencyController({
+      latency: createLatencyOptions(),
+      playback: { autoPlay: false, muted: true },
+    })
+    const input = { ranges: [{ start: 0, end: 1 }], loaderPaused: false, nowMs: 0 }
+
+    expect(controller.evaluate(input).playbackControl).toBeUndefined()
+    expect(controller.evaluate({ ...input, nowMs: 100 }).playbackControl).toBeUndefined()
+  })
+
+  it('does not retry a rejected startup play until a new session resets the controller', () => {
+    const controller = new LatencyController({
+      latency: createLatencyOptions(),
+      playback: { autoPlay: true, muted: false },
+    })
+    const input = { ranges: [{ start: 0, end: 1 }], loaderPaused: false, nowMs: 0 }
+
+    expect(controller.evaluate(input).playbackControl).toStrictEqual({ type: 'play', reason: 'startup-buffer-ready' })
+    controller.recordPlaybackControlResult({
+      type: 'play',
+      accepted: false,
+      error: { name: 'NotAllowedError', message: 'Playback requires a user gesture.' },
+    })
+    expect(controller.evaluate({ ...input, nowMs: 100 }).playbackControl).toBeUndefined()
+
+    controller.reset()
+    expect(controller.evaluate({ ...input, nowMs: 200 }).playbackControl).toStrictEqual({ type: 'play', reason: 'startup-buffer-ready' })
+    expect(controller.evaluate({ ...input, nowMs: 300 }).playbackControl).toBeUndefined()
+  })
+
   it('computes live latency and requests cleanup from video state', () => {
     const controller = new LatencyController({
       latency: createLatencyOptions(),

@@ -45,6 +45,7 @@ export class RivmuxPlayer {
   private state: PlayerState = 'idle'
   private lifecycleGeneration = 0
   private terminalError?: PlayerError
+  private autoplayWarningEmitted = false
   private startPromise?: Promise<void>
   private stopPromise?: Promise<void>
   private destroyPromise?: Promise<void>
@@ -186,6 +187,7 @@ export class RivmuxPlayer {
     const workerClient = this.workerClient
     if (workerClient === undefined) {
       if (this.isLifecycleOperationCurrent(lifecycleGeneration)) {
+        this.autoplayWarningEmitted = false
         this.state = 'stopped'
         this.events.emit('stopped', undefined)
       }
@@ -205,6 +207,7 @@ export class RivmuxPlayer {
       return
     }
     this.playback.detachSource()
+    this.autoplayWarningEmitted = false
     this.state = 'stopped'
   }
 
@@ -336,6 +339,7 @@ export class RivmuxPlayer {
 
   private attachMediaSourceHandle(handle: MediaSourceHandle): void {
     if (this.state === 'started') {
+      this.autoplayWarningEmitted = false
       this.playback.detachSource()
     }
     if (!this.playback.attachMediaSourceHandle(handle)) {
@@ -376,6 +380,20 @@ export class RivmuxPlayer {
       return
     }
     workerClient.post({ type: 'playback-control-result', result })
+    if (
+      action.type === 'play' &&
+      action.reason === 'startup-buffer-ready' &&
+      this.options.playback.autoPlay &&
+      !result.accepted &&
+      !this.autoplayWarningEmitted
+    ) {
+      this.autoplayWarningEmitted = true
+      this.events.emit('warning', {
+        code: 'RIVMUX_AUTOPLAY_REJECTED',
+        message: '浏览器拒绝了自动播放；请在用户手势处理器中调用 video.play() 恢复播放。',
+        cause: result.error,
+      })
+    }
   }
 
   private enterFatalErrorState(error: PlayerError): void {

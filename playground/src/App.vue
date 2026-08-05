@@ -32,7 +32,11 @@ async function handleOpenPlayer() {
   try {
     await destroyCurrentPlayer()
 
-    nextPlayer = new RivmuxPlayer(sourceUrl.value)
+    nextPlayer = new RivmuxPlayer(sourceUrl.value, {
+      playback: {
+        muted: true,
+      },
+    })
     nextPlayer.on('mediaInfo', handleMediaInfo)
     nextPlayer.on('error', handlePlayerError)
     player.value = nextPlayer

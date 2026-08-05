@@ -96,6 +96,107 @@ describe('RivmuxPlayer', () => {
     expect(video.load).toHaveBeenCalledTimes(2)
   })
 
+  it('reports a rejected autoplay once per media session and keeps the player operational', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    const autoplayError = new Error('Playback requires a user gesture.')
+    autoplayError.name = 'NotAllowedError'
+    vi.mocked(video.play).mockRejectedValue(autoplayError)
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const warnings = vi.fn()
+    const errors = vi.fn()
+    const mediaInfo = vi.fn()
+    const stats = vi.fn()
+    player.on('warning', warnings)
+    player.on('error', errors)
+    player.on('mediaInfo', mediaInfo)
+    player.on('stats', stats)
+
+    const attach = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: { id: 'initial' } as unknown as MediaSourceHandle })
+    await attach
+    await player.start()
+
+    const startupPlay = { type: 'play', reason: 'startup-buffer-ready' } as const
+    worker.emit({ type: 'playback-control', action: startupPlay })
+    await flushPromises()
+
+    const rejectedResult = {
+      type: 'play' as const,
+      accepted: false as const,
+      error: { name: 'NotAllowedError', message: 'Playback requires a user gesture.' },
+    }
+    expect(worker.commands).toContainEqual({ type: 'playback-control-result', result: rejectedResult })
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith({
+      code: 'RIVMUX_AUTOPLAY_REJECTED',
+      message: expect.stringContaining('用户手势'),
+      cause: rejectedResult.error,
+    })
+    expect(errors).not.toHaveBeenCalled()
+
+    worker.emit({ type: 'playback-control', action: startupPlay })
+    await flushPromises()
+    expect(worker.commands.filter((command) => command.type === 'playback-control-result')).toHaveLength(2)
+    expect(warnings).toHaveBeenCalledOnce()
+
+    worker.emit({ type: 'media-info', mediaInfo: { container: 'fmp4', videoCodec: 'avc1.42C01E' } })
+    worker.emit({ type: 'stats', stats: { outputBytes: 1024 } })
+    expect(mediaInfo).toHaveBeenCalledOnce()
+    expect(stats).toHaveBeenCalledOnce()
+
+    vi.mocked(video.play).mockResolvedValueOnce()
+    await expect(video.play()).resolves.toBeUndefined()
+    expect(video.play).toHaveBeenCalledTimes(3)
+
+    worker.emit({ type: 'media-source-handle', handle: { id: 'replacement' } as unknown as MediaSourceHandle })
+    worker.emit({ type: 'playback-control', action: startupPlay })
+    await flushPromises()
+    expect(warnings).toHaveBeenCalledTimes(2)
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
+  it('reports non-policy autoplay failures without emitting a terminal error', async () => {
+    const worker = new MockWorker()
+    const video = createMockVideo()
+    vi.mocked(video.play).mockRejectedValueOnce(new Error('Decoder is temporarily unavailable.'))
+    const player = new RivmuxPlayer('https://example.test/live.flv', undefined, {
+      workerFactory: () => worker,
+      detectRuntime: () => undefined,
+    })
+    const warnings = vi.fn()
+    const errors = vi.fn()
+    player.on('warning', warnings)
+    player.on('error', errors)
+
+    const attach = player.attach(video)
+    worker.emit({ type: 'worker-ready' })
+    worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
+    await attach
+    await player.start()
+    worker.emit({ type: 'playback-control', action: { type: 'play', reason: 'startup-buffer-ready' } })
+    await flushPromises()
+
+    expect(warnings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'RIVMUX_AUTOPLAY_REJECTED',
+        cause: { name: 'Error', message: 'Decoder is temporarily unavailable.' },
+      })
+    )
+    expect(errors).not.toHaveBeenCalled()
+
+    const destroy = player.destroy()
+    worker.emit({ type: 'destroyed' })
+    await destroy
+  })
+
   it('keeps two player instances on separate workers', async () => {
     const workers = [new MockWorker(), new MockWorker()]
     const players = workers.map(

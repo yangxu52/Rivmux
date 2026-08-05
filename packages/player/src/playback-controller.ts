@@ -55,7 +55,14 @@ export class PlaybackController {
   async applyControl(action: PlaybackControlAction): Promise<PlaybackControlResult> {
     const video = this.video
     if (video === undefined) {
-      return { type: action.type, accepted: false, message: 'No video element is attached.' }
+      return {
+        type: action.type,
+        accepted: false,
+        error: {
+          name: 'NotAttachedError',
+          message: 'No video element is attached.',
+        },
+      }
     }
 
     try {
@@ -75,7 +82,7 @@ export class PlaybackController {
       return {
         type: action.type,
         accepted: false,
-        message: cause instanceof Error ? cause.message : String(cause),
+        error: normalizePlaybackControlError(cause),
       }
     }
   }
@@ -112,6 +119,35 @@ export class PlaybackController {
       paused: video.paused,
       ...(droppedFrames === undefined ? {} : { droppedFrames }),
     }
+  }
+}
+
+function normalizePlaybackControlError(cause: unknown): { name: string; message: string } {
+  if (cause instanceof Error) {
+    return {
+      name: safelyStringifyErrorField(() => cause.name, 'Error'),
+      message: safelyStringifyErrorField(() => cause.message, 'Unknown playback control error.'),
+    }
+  }
+
+  try {
+    return {
+      name: 'Error',
+      message: String(cause),
+    }
+  } catch {
+    return {
+      name: 'Error',
+      message: 'Unknown playback control error.',
+    }
+  }
+}
+
+function safelyStringifyErrorField(read: () => unknown, fallback: string): string {
+  try {
+    return String(read())
+  } catch {
+    return fallback
   }
 }
 

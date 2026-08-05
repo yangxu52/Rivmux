@@ -127,6 +127,51 @@ describe('RuntimeWorker', () => {
     expect(mse.mediaSegments).toStrictEqual([{ track: 'video', dtsStartMs: 0, dtsEndMs: 80, keyframe: true, bytes: new Uint8Array([4, 5, 6]) }])
   })
 
+  it('does not retry rejected startup playback and requests it once again after stop and restart', async () => {
+    const port = new MockPort()
+    const firstLoader = new BlockingLoader()
+    const secondLoader = new BlockingLoader()
+    const loaders = [firstLoader, secondLoader]
+    const runtime = createRuntime(port, {
+      createMseController: () => new MockMseController(),
+      createLoader: () => loaders.shift() as StreamLoader,
+      createTransmuxCore: () => createIdleTransmuxCore(),
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await firstLoader.waitForOpen()
+
+    const rejection = {
+      type: 'play' as const,
+      accepted: false as const,
+      error: { name: 'NotAllowedError', message: 'Playback requires a user gesture.' },
+    }
+    await runtime.handleCommand({ type: 'playback-control-result', result: rejection })
+    await runtime.handleCommand({
+      type: 'video-state',
+      state: { currentTime: 0, readyState: 3, playbackRate: 1, paused: true },
+    })
+
+    expect(startupPlayRequests(port)).toHaveLength(1)
+    expect(port.messages.some((message) => message.type === 'warning' || message.type === 'error')).toBe(false)
+
+    await runtime.handleCommand({ type: 'stop' })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await secondLoader.waitForOpen()
+    await runtime.handleCommand({ type: 'playback-control-result', result: rejection })
+    await runtime.handleCommand({
+      type: 'video-state',
+      state: { currentTime: 0, readyState: 3, playbackRate: 1, paused: true },
+    })
+
+    expect(startupPlayRequests(port)).toHaveLength(2)
+    expect(port.messages.some((message) => message.type === 'warning' || message.type === 'error')).toBe(false)
+    await runtime.handleCommand({ type: 'stop' })
+  })
+
   it('acknowledges start after scheduling loader consumption without waiting for the network or media', async () => {
     const port = new MockPort()
     const loader = new DeferredOpenLoader()
@@ -1208,6 +1253,7 @@ describe('RuntimeWorker', () => {
     const recovered = port.messages.find((message) => message.type === 'recovered')
     expect(recovered).toMatchObject({ type: 'recovered', info: { attempt: 2 } })
     expect(recovered?.info.downtimeMs).toBeGreaterThanOrEqual(0)
+    expect(startupPlayRequests(port)).toHaveLength(2)
 
     await waitForPendingRead(replacementLoader)
     replacementLoader.fail(new HttpFlvLoaderError('RIVMUX_HTTP_READ_FAILED', 'Read failed.', { phase: 'read', reason: 'read-error' }))
@@ -1322,6 +1368,12 @@ function mediaEvents(): CoreEvent[] {
     { type: 'initSegment', data: { track: 'video', codec: 'avc1.42E01E', timescale: 1000, bytes: new Uint8Array([1]) } },
     { type: 'mediaSegment', data: { track: 'video', dtsStartMs: 0, dtsEndMs: 40, keyframe: true, bytes: new Uint8Array(512 * 1024) } },
   ]
+}
+
+function startupPlayRequests(port: MockPort): WorkerMessage[] {
+  return port.messages.filter(
+    (message) => message.type === 'playback-control' && message.action.type === 'play' && message.action.reason === 'startup-buffer-ready'
+  )
 }
 
 function createAbortAwareDelay(): {

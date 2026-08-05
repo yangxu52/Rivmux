@@ -220,6 +220,20 @@ player.on('destroyed', () => {})
 
 用户事件监听器中的异常属于宿主应用异常，不属于 Rivmux 播放错误，也不会转换为 `PlayerError`。单个监听器抛出异常时，其他监听器仍会继续执行，`stop()`、`destroy()` 等生命周期 Promise 也会按内部状态正常完成。Rivmux 会优先通过平台的 `globalThis.reportError()` 报告该异常；平台不支持时使用 `console.error()` 降级报告。
 
+## 自动播放拒绝
+
+浏览器可能根据自动播放策略拒绝 Rivmux 请求的 `video.play()`。无用户手势的直播场景建议设置 `playback.muted: true`，以提高自动播放成功率。拒绝会产生非终止 warning `RIVMUX_AUTOPLAY_REJECTED`，其 `cause` 保留浏览器错误的 `name` 和 `message`；该 warning 不会中断网络加载、转封装或缓冲，也不会触发 `error` 事件。
+
+Rivmux 在同一播放会话中不会自动重复调用 `play()`。调用方可以在按钮点击等真实用户手势处理器内直接恢复：
+
+```ts
+button.addEventListener('click', () => {
+  void video.play()
+})
+```
+
+设置 `playback.autoPlay: false` 后，Rivmux 不会主动请求启动播放，也不会产生该 warning。
+
 ## 直播连接恢复
 
 Rivmux 会为以下直播网络故障重建 Loader、转封装核心和 MSE 播放会话：

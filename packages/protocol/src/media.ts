@@ -31,9 +31,20 @@ export type PlaybackControlAction =
   | { type: 'set-playback-rate'; playbackRate: number; reason: 'latency-above-target' | 'latency-near-target' }
   | { type: 'seek'; targetTime: number; reason: 'latency-max-exceeded' }
 
-/** Result of applying a worker-requested playback operation. */
-export type PlaybackControlResult = {
-  type: PlaybackControlAction['type']
-  accepted: boolean
-  message?: string
+/** Structured, clone-safe failure returned for a playback operation. */
+export type PlaybackControlError = {
+  name: string
+  message: string
 }
+
+/** Result of applying a worker-requested playback operation. */
+export type PlaybackControlResult =
+  | {
+      type: PlaybackControlAction['type']
+      accepted: true
+    }
+  | {
+      type: PlaybackControlAction['type']
+      accepted: false
+      error: PlaybackControlError
+    }

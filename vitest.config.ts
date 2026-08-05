@@ -18,8 +18,23 @@ export default defineConfig({
         test: {
           name: 'browser',
           include: ['tests/browser/**/*.test.ts'],
+          exclude: ['tests/browser/autoplay.test.ts'],
           browser: {
             provider: playwright(),
+            enabled: true,
+            headless: true,
+            screenshotFailures: false,
+            instances: [{ browser: 'chromium' }],
+          },
+        },
+      },
+      {
+        plugins: [createBrowserTestServer()],
+        test: {
+          name: 'browser-autoplay',
+          include: ['tests/browser/autoplay.test.ts'],
+          browser: {
+            provider: playwright({ launchOptions: { args: ['--autoplay-policy=user-gesture-required'] } }),
             enabled: true,
             headless: true,
             screenshotFailures: false,
