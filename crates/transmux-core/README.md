@@ -1,11 +1,10 @@
 # Rivmux Transmux Core
 
-Rust transmux core for Rivmux container parsing and fragmented MP4 generation.
+`rivmux_transmux_core` 是 Rivmux 的 Rust/WASM 转封装核心，负责 HTTP-FLV 解析、音视频归一化和 fragmented MP4 片段生成。它由 `@rivmux/runtime-worker` 在 Dedicated Worker 中加载，普通用户不应直接调用。
 
-The public first-release contract remains HTTP-FLV with H.264/AVC and optional
-AAC-LC. HEVC, AV1, and Opus implementations in this private core are
-experimental/internal until each codec has repository-owned playable fixtures,
-Chromium acceptance coverage, and an explicit public support decision.
+当前公开输入契约包括 HTTP-FLV + AVC/H.264 + AAC-LC，以及限定范围内的 Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC。HEVC Stable 仅表示该范围内的解析、转封装、错误行为和生命周期契约稳定；浏览器最终是否能解码仍取决于环境和具体 codec profile。AV1、Opus 保持 Experimental，MPEG-TS 为 Roadmap。
+
+HEVC Stable 不包含 `hev1`、多轨、动态 codec 配置切换或 HEVC + Opus。结构合法但 MSE 不支持准确 codec MIME 时，由上层映射为 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
 
 ## 内部媒体契约
 

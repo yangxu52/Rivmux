@@ -39,6 +39,37 @@ describe('MseController SourceBuffer strategy', () => {
     expect(registry.sourceBuffers[0]?.appendCount).toBe(3)
   })
 
+  it('appends the stable HEVC/AAC muxed MIME without splitting SourceBuffers', async () => {
+    const registry = installMockMse((mimeType) => mimeType === 'video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2"')
+    const controller = new MseController()
+
+    await controller.createMediaSourceHandle()
+    await controller.appendInitSegment({
+      track: 'muxed',
+      codec: 'hvc1.1.6.L30.90, mp4a.40.2',
+      timescale: 1000,
+      bytes: new Uint8Array([1, 2, 3]),
+    })
+    await controller.appendMediaSegment({
+      track: 'video',
+      dtsStartMs: 0,
+      dtsEndMs: 100,
+      keyframe: true,
+      bytes: new Uint8Array([4]),
+    })
+    await controller.appendMediaSegment({
+      track: 'audio',
+      dtsStartMs: 0,
+      dtsEndMs: 23,
+      keyframe: true,
+      bytes: new Uint8Array([5]),
+    })
+
+    expect(registry.sourceBuffers).toHaveLength(1)
+    expect(registry.sourceBuffers[0]?.mimeType).toBe('video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2"')
+    expect(registry.sourceBuffers[0]?.appendCount).toBe(3)
+  })
+
   it('uses separate SourceBuffers for separate video and audio init segments', async () => {
     const registry = installMockMse()
     const controller = new MseController()
@@ -106,6 +137,21 @@ describe('MseController SourceBuffer strategy', () => {
         bytes: new Uint8Array([1]),
       })
     ).rejects.toEqual(new MseUnsupportedMimeError('audio/mp4; codecs="opus"'))
+  })
+
+  it('reports unsupported HEVC/AAC MIME from its muxed init segment', async () => {
+    installMockMse(() => false)
+    const controller = new MseController()
+
+    await controller.createMediaSourceHandle()
+    await expect(
+      controller.appendInitSegment({
+        track: 'muxed',
+        codec: 'hvc1.1.6.L30.90, mp4a.40.2',
+        timescale: 1000,
+        bytes: new Uint8Array([1]),
+      })
+    ).rejects.toEqual(new MseUnsupportedMimeError('video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2"'))
   })
 })
 

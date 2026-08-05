@@ -1,10 +1,14 @@
 mod support;
 
-use rivmux_transmux_core::{CoreConfig, CoreEvent, TrackKind, TransmuxCore};
+use rivmux_transmux_core::{
+    AudioCodecKind, CoreConfig, CoreEvent, TrackKind, TransmuxCore, VideoCodecKind,
+};
 use support::{
     baseline_320x240_avcc, build_flv, drain, enhanced_video_tag, find_box, minimal_avcc,
     read_box_type, video_sample_tag, video_sequence_header_tag,
 };
+
+const HEVC_AAC_FLV: &[u8] = include_bytes!("../../transmux-fixtures/fixtures/hevc-aac.flv");
 
 #[test]
 fn emits_video_init_and_keyframe_media_segment() {
@@ -191,6 +195,107 @@ fn writes_av1_sequence_header_dimensions_to_media_info_and_sample_entry() {
     assert_eq!(
         read_visual_sample_entry_dimensions(&init.bytes, b"av01"),
         (64, 64)
+    );
+}
+
+#[test]
+fn transmuxes_repository_hevc_aac_fixture_with_stable_muxed_contract() {
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    for chunk in HEVC_AAC_FLV.chunks(4096) {
+        core.push_chunk(chunk).unwrap();
+    }
+    core.flush().unwrap();
+    let events = drain(&mut core);
+
+    let infos: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::MediaInfo(info) => Some(info),
+            _ => None,
+        })
+        .collect();
+    let info = infos
+        .iter()
+        .find(|info| {
+            info.video == Some(VideoCodecKind::Hevc) && info.audio == Some(AudioCodecKind::Aac)
+        })
+        .expect("expected combined HEVC/AAC media info");
+    assert_eq!(info.video_codec.as_deref(), Some("hvc1.1.6.L30.90"));
+    assert_eq!(info.audio_codec.as_deref(), Some("mp4a.40.2"));
+    assert_eq!(info.width, Some(160));
+    assert_eq!(info.height, Some(90));
+    assert_eq!(info.audio_sample_rate, Some(44_100));
+    assert_eq!(info.audio_channel_count, Some(1));
+    let inits: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::InitSegment(segment) => Some(segment),
+            _ => None,
+        })
+        .collect();
+    let init = inits
+        .iter()
+        .find(|segment| segment.track == TrackKind::Muxed)
+        .expect("expected muxed HEVC/AAC init segment");
+    assert_eq!(init.codec, "hvc1.1.6.L30.90, mp4a.40.2");
+    assert_eq!(init.timescale, 1000);
+    assert_eq!(read_box_type(&init.bytes, 0), "ftyp");
+    assert!(find_box(&init.bytes, b"hvc1").is_some());
+    assert!(find_box(&init.bytes, b"hvcC").is_some());
+    assert!(find_box(&init.bytes, b"mp4a").is_some());
+    assert!(find_box(&init.bytes, b"esds").is_some());
+    let media: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::MediaSegment(segment) => Some(segment),
+            _ => None,
+        })
+        .collect();
+    let video_media: Vec<_> = media
+        .iter()
+        .filter(|segment| segment.track == TrackKind::Video)
+        .collect();
+    let audio_media: Vec<_> = media
+        .iter()
+        .filter(|segment| segment.track == TrackKind::Audio)
+        .collect();
+    assert!(
+        video_media.len() >= 30,
+        "expected all 30 HEVC frames, got {}",
+        video_media.len()
+    );
+    assert!(
+        audio_media.len() >= 100,
+        "expected AAC timeline, got {}",
+        audio_media.len()
+    );
+    assert!(video_media.first().is_some_and(|segment| segment.keyframe));
+    assert!(
+        video_media
+            .iter()
+            .filter(|segment| segment.keyframe)
+            .count()
+            >= 3
+    );
+    assert!(video_media.iter().all(|segment| {
+        segment.dts_end_ms > segment.dts_start_ms
+            && find_box(&segment.bytes, b"moof").is_some()
+            && find_box(&segment.bytes, b"mdat").is_some()
+    }));
+    assert!(audio_media.iter().all(|segment| {
+        segment.dts_end_ms > segment.dts_start_ms
+            && find_box(&segment.bytes, b"moof").is_some()
+            && find_box(&segment.bytes, b"mdat").is_some()
+    }));
+    assert!(
+        video_media
+            .windows(2)
+            .all(|segments| segments[1].dts_start_ms >= segments[0].dts_start_ms)
+    );
+    assert!(
+        audio_media
+            .windows(2)
+            .all(|segments| segments[1].dts_start_ms >= segments[0].dts_start_ms)
     );
 }
 

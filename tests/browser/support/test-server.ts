@@ -172,10 +172,12 @@ export function createBrowserTestServer(): Plugin {
         })
 
         const fixture = url.searchParams.get('fixture')
-        const isPlayableFixture = fixture === 'h264-aac-playable'
+        const isPlayableFixture = fixture === 'h264-aac-playable' || fixture === 'hevc-aac-playable'
         const isCoreFixture = isPlayableFixture || fixture === 'h264' || fixture === 'h264-aac' || fixture === 'h264-aac-late-config' || fixture === 'opus'
         const chunk = isPlayableFixture
-          ? H264_AAC_PLAYABLE_FLV
+          ? fixture === 'hevc-aac-playable'
+            ? HEVC_AAC_PLAYABLE_FLV
+            : H264_AAC_PLAYABLE_FLV
           : fixture === 'h264'
             ? createCoreH264FlvFixture()
             : fixture === 'h264-aac'
@@ -225,6 +227,7 @@ export function createBrowserTestServer(): Plugin {
 }
 
 const H264_AAC_PLAYABLE_FLV = new Uint8Array(readFileSync(new URL('../../../crates/transmux-fixtures/fixtures/h264-aac.flv', import.meta.url)))
+const HEVC_AAC_PLAYABLE_FLV = new Uint8Array(readFileSync(new URL('../../../crates/transmux-fixtures/fixtures/hevc-aac.flv', import.meta.url)))
 
 function getStreamState(streamStates: Map<string, StreamState>, id: string): StreamState {
   const existing = streamStates.get(id)

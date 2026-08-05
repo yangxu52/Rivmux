@@ -1,3 +1,4 @@
+export type * from './capabilities'
 export type * from './diagnostics'
 export type * from './events'
 export type * from './media'

@@ -1,18 +1,10 @@
 # Rivmux Player
 
-Public browser player facade for Rivmux low-latency live playback.
+`rivmux` 是 Rivmux 面向用户的浏览器播放器包。它在 Dedicated Worker 中读取 HTTP-FLV，将音视频转封装为 fragmented MP4，并通过 Worker MSE 连接到 `<video>` 元素。当前没有主线程 MSE 降级路径。
 
-`rivmux` loads HTTP-FLV streams in a dedicated worker, transmuxes supported
-audio/video into fragmented MP4, and attaches the resulting media stream to a
-browser `<video>` element.
+## 安装
 
-M1 supports only the dedicated-worker MSE runtime path. Main-thread MSE is not available.
-
-The first-release support contract is HTTP-FLV with H.264/AVC video and optional
-AAC-LC audio. MPEG-TS is roadmap work. Existing HEVC, AV1, and Opus core paths
-are experimental internals and are not supported public inputs.
-
-## Install
+当前发布格式为 ESM-only，不提供 CommonJS、UMD 或全局变量构建。
 
 ```sh
 pnpm add rivmux
@@ -22,10 +14,9 @@ pnpm add rivmux
 npm install rivmux
 ```
 
-## Basic Usage
+## 基本用法
 
-Always wait for `attach()` before calling `start()`. `attach()` initializes the
-worker and connects the internal `MediaSourceHandle` to the video element.
+调用 `start()` 前必须等待 `attach()` 完成。`attach()` 会初始化 Worker，并把内部 `MediaSourceHandle` 连接到 video 元素。
 
 ```ts
 import { RivmuxPlayer } from 'rivmux'
@@ -33,7 +24,7 @@ import { RivmuxPlayer } from 'rivmux'
 const video = document.querySelector<HTMLVideoElement>('#player')
 
 if (!video) {
-  throw new Error('Missing video element')
+  throw new Error('未找到 video 元素')
 }
 
 const player = new RivmuxPlayer('https://example.com/live.flv', {
@@ -43,7 +34,7 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
 })
 
 player.on('mediaInfo', (info) => {
-  console.log('media info', info)
+  console.log('媒体信息', info)
 })
 
 player.on('error', (error) => {
@@ -53,26 +44,77 @@ player.on('error', (error) => {
 await player.attach(video)
 await player.start()
 
-// Later:
+// 不再使用时：
 await player.stop()
 await player.destroy()
 ```
 
-## Player Lifecycle
+## 能力探测
+
+创建播放器前可同步读取基础运行环境和解码能力：
+
+```ts
+import { getCapabilities, isSupported } from 'rivmux'
+
+if (!isSupported()) {
+  throw new Error('当前环境不具备 Rivmux 基础运行能力')
+}
+
+const capabilities = getCapabilities()
+console.log(capabilities.decoding.stableProfiles.hevcAac)
+```
+
+```ts
+type SupportStatus = 'supported' | 'unsupported' | 'unknown'
+
+type RivmuxCapabilities = {
+  supported: boolean
+  runtime: {
+    dedicatedWorker: boolean
+    workerMse: boolean
+    fetchStreaming: boolean
+    readableStream: boolean
+    webAssembly: boolean
+  }
+  decoding: {
+    video: {
+      avc: SupportStatus
+      hevc: SupportStatus
+      av1: SupportStatus
+    }
+    audio: {
+      aac: SupportStatus
+      opus: SupportStatus
+    }
+    stableProfiles: {
+      avcAac: SupportStatus
+      hevcAac: SupportStatus
+    }
+  }
+}
+```
+
+`isSupported()` 始终等于 `getCapabilities().supported`。`supported` 只表示 Dedicated Worker、Worker MSE、流式 Fetch、ReadableStream 和 WebAssembly 等基础运行条件可用，不保证具体媒体流能够播放。
+
+解码矩阵通过同步的 `MediaSource.isTypeSupported()` 对代表性 codec 执行前置判断：`supported` 表示环境报告支持，`unsupported` 表示环境明确拒绝，`unknown` 表示 API 不可用或无法可靠判断。该结果不会改变输入的 Stable、Experimental 或 Roadmap 等级，也不替代真实流校验。Rivmux 取得实际 codec、profile 和 level 后，仍会使用准确 MIME 做最终 MSE 校验。
+
+能力探测不会创建 Worker、发起网络请求或修改 DOM。在 SSR 和 Node.js 环境中调用不会抛错：基础能力为 `false`，无法判断的解码能力为 `unknown`。
+
+## 播放器生命周期
 
 ```ts
 const player = new RivmuxPlayer(url, options)
 ```
 
-| Call                              | Description                                                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `new RivmuxPlayer(url, options?)` | Creates a player instance for one stream URL.                                                            |
-| `await player.attach(video)`      | Attaches the player to a `<video>` element and prepares the worker/MSE pipeline.                         |
-| `await player.start()`            | Starts loading, transmuxing, buffering, and playback control. Call after `attach()`.                     |
-| `await player.stop()`             | Stops loading, detaches the media source, and keeps the instance reusable.                               |
-| `await player.destroy()`          | Releases the worker, timers, listeners, and video source. The instance cannot be reused after this call. |
-| `player.on(type, listener)`       | Subscribes to a player event.                                                                            |
-| `player.off(type, listener)`      | Removes a previously registered listener.                                                                |
+| 调用                              | 含义                                                         |
+| --------------------------------- | ------------------------------------------------------------ |
+| `new RivmuxPlayer(url, options?)` | 为一个流地址创建播放器实例。                                 |
+| `await player.attach(video)`      | 绑定 `<video>` 元素并准备 Worker/MSE 链路。                  |
+| `await player.start()`            | 启动加载、转封装、缓冲与播放控制；必须在 `attach()` 后调用。 |
+| `await player.stop()`             | 停止加载并解绑媒体源；实例可以再次启动。                     |
+| `await player.destroy()`          | 释放 Worker、定时器、监听器和媒体源；实例不可再用。          |
+| `player.on(type, listener)`       | 订阅播放器事件。                                             |
+| `player.off(type, listener)`      | 移除先前注册的监听器。                                       |
 
 `attach()` 完成只表示媒体源句柄已经连接；`start()` 完成只表示 Worker 已建立本次启动所需的内部加载、转封装和 MSE 会话。两者都不表示已经解析出媒体信息、已经追加首个媒体片段，也不表示 `<video>` 已触发 `canplay` 或开始播放。请通过 `mediaInfo`、`stats`、`error` 和视频元素事件观察后续结果。
 
@@ -80,10 +122,9 @@ const player = new RivmuxPlayer(url, options)
 
 上述规则收紧了旧版本中“发送启动命令后立即完成”的时序；依赖旧时序的调用方应改为等待 `start()`，并将媒体就绪逻辑放到对应事件中。
 
-## Options
+## 配置项
 
-All options are optional. Missing fields are merged with
-`DEFAULT_RIVMUX_PLAYER_OPTIONS`.
+所有配置均为可选项，缺省字段会与 `DEFAULT_RIVMUX_PLAYER_OPTIONS` 合并。
 
 ```ts
 import { RivmuxPlayer } from 'rivmux'
@@ -122,26 +163,26 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
 
 ### `playback`
 
-| Option     | Default | Description                                                                       |
-| ---------- | ------- | --------------------------------------------------------------------------------- |
-| `autoPlay` | `true`  | Lets the runtime request `video.play()` when enough startup buffer is available.  |
-| `muted`    | `false` | Sets `video.muted`. Many browsers require muted playback for autoplay with audio. |
+| 配置项     | 默认值  | 含义                                                       |
+| ---------- | ------- | ---------------------------------------------------------- |
+| `autoPlay` | `true`  | 启动缓冲足够时，由运行时请求 `video.play()`。              |
+| `muted`    | `false` | 设置 `video.muted`；浏览器通常只允许带音频的静音自动播放。 |
 
 ### `latency`
 
-Values are in seconds.
+以下数值单位均为秒。
 
-| Option             | Default | Description                                                                                    |
-| ------------------ | ------- | ---------------------------------------------------------------------------------------------- |
-| `startupBuffer`    | `0.35`  | Buffered duration required before automatic playback starts.                                   |
-| `target`           | `1.2`   | Desired live latency. The runtime uses this when resuming fetches and restoring playback rate. |
-| `max`              | `2.5`   | Maximum tolerated live latency before the runtime seeks closer to the live edge.               |
-| `maxForwardBuffer` | `4`     | Forward buffer threshold where the loader may pause to avoid excessive buffering.              |
-| `backwardBuffer`   | `1.5`   | Amount of buffer to keep behind the current playhead during cleanup.                           |
+| 配置项             | 默认值 | 含义                                             |
+| ------------------ | ------ | ------------------------------------------------ |
+| `startupBuffer`    | `0.35` | 发起自动播放前需要的缓冲时长。                   |
+| `target`           | `1.2`  | 目标直播延迟；恢复读取和播放速率时使用。         |
+| `max`              | `2.5`  | 最大可接受直播延迟；超过后向直播边缘追帧。       |
+| `maxForwardBuffer` | `4`    | 前向缓冲上限；Loader 可暂停读取以避免过度缓冲。  |
+| `backwardBuffer`   | `1.5`  | 清理缓冲时在当前播放位置之前保留的历史缓冲时长。 |
 
 ### `network`
 
-| Option               | Default         | Description                                                                              |
+| 配置项               | 默认值          | 含义                                                                                     |
 | -------------------- | --------------- | ---------------------------------------------------------------------------------------- |
 | `headers`            | `{}`            | HTTP-FLV 请求附带的额外请求头。                                                          |
 | `credentials`        | `'same-origin'` | Fetch 请求的 credentials 模式。                                                          |
@@ -153,44 +194,37 @@ Values are in seconds.
 
 ### `runtime`
 
-| Option            | Default             | Description                                                                                                               |
-| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `preferWorkerMse` | `true`              | Must remain `true` in M1. Main-thread MSE fallback is not implemented.                                                    |
-| `workerUrl`       | bundled worker URL  | Advanced override for the packaged Dedicated Worker script URL.                                                           |
-| `wasmUrl`         | bundled WASM module | Advanced override for the packaged WASM binary URL. It must match the Worker release that contains the wasm-bindgen glue. |
+| 配置项            | 默认值             | 含义                                                                          |
+| ----------------- | ------------------ | ----------------------------------------------------------------------------- |
+| `preferWorkerMse` | `true`             | 当前必须为 `true`；尚未实现主线程 MSE 降级。                                  |
+| `workerUrl`       | 包内 Worker URL    | 高级配置，用于覆盖包内 Dedicated Worker 脚本 URL。                            |
+| `wasmUrl`         | 包内 WASM 模块 URL | 高级配置，用于覆盖 WASM URL；必须与包含 wasm-bindgen 胶水的 Worker 版本匹配。 |
 
-### Advanced Asset Deployment
+### Worker/WASM 资产部署
 
-Most applications should omit `runtime.workerUrl` and `runtime.wasmUrl`. The
-default package assets are tracked by Vite and emitted with the application
-build.
+多数应用无需设置 `runtime.workerUrl` 和 `runtime.wasmUrl`。默认资产 URL 会被 Vite 等打包工具跟踪，并随应用构建输出。
 
-Set these options only when your deployment serves Rivmux assets from a fixed
-public path or CDN:
+只有在固定公共路径或 CDN 部署 Rivmux 资产时才需要覆盖：
 
 ```ts
 const player = new RivmuxPlayer('https://example.com/live.flv', {
   runtime: {
-    workerUrl: 'https://cdn.example.com/rivmux/0.4.0/rivmux-runtime-worker.js',
-    wasmUrl: 'https://cdn.example.com/rivmux/0.4.0/rivmux-transmux-core.wasm',
+    workerUrl: 'https://cdn.example.com/rivmux/0.5.0/rivmux-runtime-worker.js',
+    wasmUrl: 'https://cdn.example.com/rivmux/0.5.0/rivmux-transmux-core.wasm',
   },
 })
 ```
 
-`workerUrl` does not derive `wasmUrl`; when you override both assets, publish
-them as a matching release pair. Treat both URLs as trusted executable asset
-locations and never construct them from untrusted input. The host application
-is responsible for compatible CSP and CORS policies, serving the WASM asset as
-`application/wasm`, and cache-busting the Worker/WASM pair together.
+`workerUrl` 不会推导 `wasmUrl`。覆盖两项时必须发布同一版本的 Worker/WASM 资产对，并使用相同缓存版本策略。两者都是可执行资产地址，不得由不可信输入拼接。宿主应用需配置兼容的 CSP 和 CORS，并以 `application/wasm` 提供 WASM 文件。
 
 ### `diagnostics`
 
-| Option            | Default | Description                                                                                                        |
-| ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
-| `statsIntervalMs` | `1000`  | Requested stats interval in milliseconds. Runtime reporting is clamped internally for stable video-state feedback. |
-| `debug`           | `false` | Enables debug-oriented behavior where supported by the runtime.                                                    |
+| 配置项            | 默认值  | 含义                                                         |
+| ----------------- | ------- | ------------------------------------------------------------ |
+| `statsIntervalMs` | `1000`  | 请求的统计上报间隔，单位为毫秒；运行时会在内部限制实际范围。 |
+| `debug`           | `false` | 在运行时已实现的范围内启用调试行为。                         |
 
-## Events
+## 事件
 
 ```ts
 import type { MediaInfo, PlayerError, PlayerStats, PlayerWarning, ReconnectInfo, RecoveryInfo } from 'rivmux'
@@ -206,7 +240,7 @@ player.on('stopped', () => {})
 player.on('destroyed', () => {})
 ```
 
-| Event          | Payload         | Description                                                        |
+| 事件           | 数据            | 含义                                                               |
 | -------------- | --------------- | ------------------------------------------------------------------ |
 | `ready`        | `undefined`     | Worker runtime 已初始化。                                          |
 | `mediaInfo`    | `MediaInfo`     | 已识别媒体容器和 codec 信息。                                      |
@@ -247,13 +281,28 @@ HTTP `401`、`403` 和其他不可恢复的 `4xx` 不会重试。媒体解析、
 
 恢复采用指数退避、最大延迟和抖动。等待重连或重建会话期间调用 `stop()` 或 `destroy()` 会立即取消恢复，不会继续创建连接。恢复会更换 `MediaSourceHandle`，因此可能出现短暂中断和时间线重置；当前不承诺无缝续播或跨连接连续时间线。
 
-## Type Imports
+## Codec 支持边界
 
-The player package re-exports the key public types from `@rivmux/protocol`:
+| 输入                                     | 等级         | 说明                      |
+| ---------------------------------------- | ------------ | ------------------------- |
+| HTTP-FLV + AVC/H.264 + AAC-LC            | Stable       | 受浏览器基础 MSE 能力约束 |
+| Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC | Stable       | 浏览器解码能力是条件化的  |
+| Enhanced HTTP-FLV + AV1                  | Experimental | 暂不形成稳定公共承诺      |
+| Enhanced HTTP-FLV + Opus                 | Experimental | 暂不形成稳定公共承诺      |
+| MPEG-TS                                  | Roadmap      | 当前不支持                |
+
+HEVC Stable 的具体范围是单视频轨、固定 codec 配置、Enhanced FLV `SequenceStart`、`CodedFrames` 和 HEVC `CodedFramesX`，输出 sample entry 为 `hvc1`。最终解码能力取决于浏览器、操作系统、设备以及具体 HEVC profile、level、bit depth 和 chroma format；Rivmux 不维护固定 profile/level allowlist。结构合法但环境不支持准确 MIME 时会产生终止错误 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
+
+`hev1`、多轨 HEVC、播放期间动态 codec 配置切换和 HEVC + Opus 不属于 Stable 范围。AV1 与 Opus 仍为 Experimental，能力矩阵中的 `supported` 不会把它们提升为 Stable。
+
+## 类型导入
+
+主包会重新导出用户需要的主要类型：
 
 ```ts
 import type {
   DiagnosticsOptions,
+  DecodingCapabilities,
   LatencyOptions,
   MediaInfo,
   NetworkOptions,
@@ -264,10 +313,12 @@ import type {
   ReconnectInfo,
   ReconnectReason,
   RecoveryInfo,
+  RivmuxCapabilities,
   RivmuxPlayerOptions,
+  RuntimeCapabilities,
   RuntimeOptions,
+  SupportStatus,
 } from 'rivmux'
 ```
 
-Use `normalizePlayerOptions(options)` if you need to inspect a fully populated
-options object with defaults applied.
+需要读取已经补齐默认值的配置对象时，可使用 `normalizePlayerOptions(options)`。当前公开 API 手动维护，完整且长期稳定的 API 手册将在 1.0 冻结阶段复核。

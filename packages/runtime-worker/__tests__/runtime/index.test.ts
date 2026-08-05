@@ -1130,6 +1130,52 @@ describe('RuntimeWorker', () => {
     })
   })
 
+  it('reports unsupported HEVC/AAC MSE MIME and cleans the failed session', async () => {
+    const port = new MockPort()
+    const loader = new MockLoader([new Uint8Array([1])])
+    const mse = new MockMseController()
+    mse.appendInitError = new MseUnsupportedMimeError('video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2"')
+    const transmuxCore = new MockTransmuxCore([
+      [
+        {
+          type: 'initSegment',
+          data: {
+            track: 'muxed',
+            codec: 'hvc1.1.6.L30.90, mp4a.40.2',
+            timescale: 1000,
+            bytes: new Uint8Array([1, 2, 3]),
+          },
+        },
+      ],
+    ])
+    const runtime = createRuntime(port, {
+      createMseController: () => mse,
+      createLoader: () => loader,
+      createTransmuxCore: () => transmuxCore,
+    })
+
+    await runtime.handleCommand({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv', options: createOptions() })
+    await runtime.handleCommand({ type: 'attach-media-source' })
+    await runtime.handleCommand({ type: 'start' })
+    await loader.waitForDone()
+
+    expect(loader.closed).toBe(true)
+    expect(mse.destroyed).toBe(true)
+    expect(port.messages).toContainEqual({
+      type: 'error',
+      error: {
+        kind: 'unsupported',
+        code: 'RIVMUX_UNSUPPORTED_MSE_CODEC',
+        message: 'MSE does not support video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2".',
+        terminal: true,
+        cause: {
+          name: 'MseUnsupportedMimeError',
+          message: 'MSE does not support video/mp4; codecs="hvc1.1.6.L30.90, mp4a.40.2".',
+        },
+      },
+    })
+  })
+
   it('cleans buffered ranges and retries once when MSE append exceeds quota', async () => {
     const port = new MockPort()
     const loader = new MockLoader([new Uint8Array([1])])

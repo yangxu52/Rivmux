@@ -1,6 +1,9 @@
 export { RivmuxPlayer } from './player'
 export { DEFAULT_RIVMUX_PLAYER_OPTIONS, normalizePlayerOptions } from './options'
 export { createPlayerError } from './errors'
+export { getCapabilities, isSupported } from './feature-detect'
+
+export type { DecodingCapabilities, RivmuxCapabilities, RuntimeCapabilities, SupportStatus } from '@rivmux/protocol'
 
 export type {
   DiagnosticsOptions,

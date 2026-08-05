@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { RivmuxPlayer } from '../../packages/player/dist/index.js'
+import { getCapabilities, RivmuxPlayer } from '../../packages/player/dist/index.js'
 
 type TestStreamStats = Record<
   string,
@@ -63,6 +63,114 @@ describe('Rivmux browser runtime', () => {
       )
       expect(video.readyState).toBeGreaterThanOrEqual(HTMLMediaElement.HAVE_FUTURE_DATA)
       expect(video.currentTime).toBeGreaterThanOrEqual(0.25)
+    } finally {
+      await player.destroy()
+      video.remove()
+    }
+  })
+
+  it('validates the stable HEVC/AAC path against the browser exact codec MIME', async () => {
+    await resetTestStreams('stable-hevc-aac')
+
+    const codec = 'hvc1.1.6.L30.90, mp4a.40.2'
+    const mimeType = `video/mp4; codecs="${codec}"`
+    const supportsExactMime = MediaSource.isTypeSupported(mimeType)
+    const capabilities = getCapabilities()
+    const video = createVideo()
+    const player = createPlayer('stable-hevc-aac', {
+      fixture: 'hevc-aac-playable',
+    })
+    const errors: unknown[] = []
+    const mediaInfo: unknown[] = []
+    const stats: unknown[] = []
+    player.on('error', (error) => errors.push(error))
+    player.on('mediaInfo', (info) => mediaInfo.push(info))
+    player.on('stats', (entry) => stats.push(entry))
+    let canPlay = false
+    let presentedVideoFrames = 0
+    video.addEventListener(
+      'canplay',
+      () => {
+        canPlay = true
+      },
+      { once: true }
+    )
+    video.requestVideoFrameCallback((_now, metadata) => {
+      presentedVideoFrames = metadata.presentedFrames
+    })
+
+    try {
+      await player.attach(video)
+      await player.start()
+
+      await waitFor(
+        () =>
+          errors.some(
+            (error) =>
+              isRecord(error) &&
+              error.kind === 'unsupported' &&
+              error.code === 'RIVMUX_UNSUPPORTED_MSE_CODEC' &&
+              error.terminal === true &&
+              isRecord(error.cause) &&
+              error.cause.name === 'MseUnsupportedMimeError' &&
+              error.cause.message === `MSE does not support ${mimeType}.`
+          ) ||
+          (mediaInfo.some(
+            (info) =>
+              isRecord(info) &&
+              info.container === 'flv' &&
+              info.videoCodec === 'hvc1.1.6.L30.90' &&
+              info.audioCodec === 'mp4a.40.2' &&
+              info.width === 160 &&
+              info.height === 90
+          ) &&
+            stats.some((entry) => isNumberFieldAtLeast(entry, 'outputBytes', 1)) &&
+            canPlay)
+      )
+
+      if (!supportsExactMime) {
+        expect(errors).toContainEqual(
+          expect.objectContaining({
+            kind: 'unsupported',
+            code: 'RIVMUX_UNSUPPORTED_MSE_CODEC',
+            terminal: true,
+            cause: expect.objectContaining({
+              name: 'MseUnsupportedMimeError',
+              message: `MSE does not support ${mimeType}.`,
+            }),
+          })
+        )
+        expect(canPlay).toBe(false)
+        return
+      }
+
+      expect(errors).toStrictEqual([])
+      expect(capabilities).toMatchObject({
+        supported: true,
+        decoding: {
+          video: { hevc: 'supported' },
+          audio: { aac: 'supported' },
+          stableProfiles: { hevcAac: 'supported' },
+        },
+      })
+      expect(mediaInfo).toContainEqual(
+        expect.objectContaining({
+          container: 'flv',
+          videoCodec: 'hvc1.1.6.L30.90',
+          audioCodec: 'mp4a.40.2',
+          width: 160,
+          height: 90,
+          audioSampleRate: 44_100,
+          audioChannelCount: 1,
+        })
+      )
+      expect(stats).toContainEqual(expect.objectContaining({ outputBytes: expect.any(Number) }))
+      expect(canPlay).toBe(true)
+      await waitForPlayback(errors, video)
+      await waitForCoreSignal(errors, () => presentedVideoFrames > 0)
+      expect(video.readyState).toBeGreaterThanOrEqual(HTMLMediaElement.HAVE_FUTURE_DATA)
+      expect(video.currentTime).toBeGreaterThanOrEqual(0.25)
+      expect(presentedVideoFrames).toBeGreaterThan(0)
     } finally {
       await player.destroy()
       video.remove()
