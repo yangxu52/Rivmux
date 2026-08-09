@@ -325,5 +325,31 @@ export function createRuntimeWorker(options: NormalizedRivmuxPlayerOptions): Wor
 }
 
 function createRuntimeWorkerError(code: string, message: string, terminal: boolean, cause?: unknown): PlayerError {
-  return cause === undefined ? { kind: 'runtime', code, message, terminal } : { kind: 'runtime', code, message, terminal, cause }
+  if (cause === undefined) {
+    return { kind: 'runtime', code, message, terminal }
+  }
+
+  return {
+    kind: 'runtime',
+    code,
+    message,
+    terminal,
+    cause: serializeCause(cause),
+  }
+}
+
+function serializeCause(cause: unknown): { name: string; message: string } {
+  if (cause instanceof Error) {
+    return { name: cause.name, message: cause.message }
+  }
+
+  if (typeof cause === 'object' && cause !== null) {
+    const value = cause as { name?: unknown; message?: unknown }
+    return {
+      name: typeof value.name === 'string' ? value.name : 'Error',
+      message: typeof value.message === 'string' ? value.message : String(cause),
+    }
+  }
+
+  return { name: 'Error', message: String(cause) }
 }

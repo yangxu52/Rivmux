@@ -18,7 +18,7 @@ import type { RuntimeWorkerFactory } from '@rivmux/runtime-worker'
 
 type PlayerState = 'idle' | 'attached' | 'starting' | 'started' | 'stopping' | 'stopped' | 'fatal-error' | 'destroying' | 'destroyed'
 
-export type RivmuxPlayerInternals = {
+type RivmuxPlayerInternals = {
   workerFactory?: RuntimeWorkerFactory
   detectRuntime?: () => PlayerError | undefined
   idFactory?: () => string
@@ -34,7 +34,7 @@ export class RivmuxPlayer {
   /** Original stream URL passed to the constructor. */
   readonly url: string
 
-  /** Fully normalized options with defaults applied. */
+  /** @internal Fully normalized options with defaults applied. */
   readonly options: NormalizedRivmuxPlayerOptions
   private readonly id: string
   private readonly events = new PlayerEventEmitter()
@@ -55,7 +55,11 @@ export class RivmuxPlayer {
    *
    * The instance does not start network loading until `start()` is called.
    */
-  constructor(url: string, options?: RivmuxPlayerOptions, internals: RivmuxPlayerInternals = {}) {
+  constructor(url: string, options?: RivmuxPlayerOptions)
+  /** @internal Test-only dependency injection; omitted from generated declarations. */
+  constructor(url: string, options?: RivmuxPlayerOptions, internals?: RivmuxPlayerInternals)
+  constructor(url: string, options?: RivmuxPlayerOptions, internals?: RivmuxPlayerInternals) {
+    internals ??= {}
     this.url = url
     this.options = normalizePlayerOptions(options)
     this.id = internals.idFactory?.() ?? createPlayerId()
@@ -297,7 +301,7 @@ export class RivmuxPlayer {
 
     switch (message.type) {
       case 'ready':
-        this.events.emit('ready', undefined)
+        this.events.emit('initialized', undefined)
         return
       case 'media-source-handle':
         this.attachMediaSourceHandle(message.handle)

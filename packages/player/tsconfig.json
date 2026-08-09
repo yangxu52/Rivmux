@@ -5,6 +5,7 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "declarationMap": true,
+    "stripInternal": true,
     "rootDir": "./src",
     "outDir": "./dist",
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo"

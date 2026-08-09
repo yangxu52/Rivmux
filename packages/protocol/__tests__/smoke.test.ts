@@ -13,7 +13,7 @@ describe('shared contracts', () => {
   })
 
   it('exposes the player event map contract', () => {
-    expectTypeOf<PlayerEventMap['ready']>().toEqualTypeOf<undefined>()
+    expectTypeOf<PlayerEventMap['initialized']>().toEqualTypeOf<undefined>()
   })
 
   it('exposes the worker protocol contract', () => {

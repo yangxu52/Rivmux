@@ -9,7 +9,6 @@ export type WorkerCommand =
   | { type: 'attach-media-source' }
   | { type: 'start' }
   | { type: 'stop' }
-  | { type: 'update-options'; options: Partial<NormalizedRivmuxPlayerOptions> }
   | { type: 'video-state'; state: VideoElementState }
   | { type: 'playback-control-result'; result: PlaybackControlResult }
   | { type: 'destroy' }

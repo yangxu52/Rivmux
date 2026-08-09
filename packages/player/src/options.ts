@@ -2,7 +2,7 @@ import { createPlayerError, playerErrorToException } from './errors'
 
 import type { NormalizedRivmuxPlayerOptions, PlayerErrorKind, RivmuxPlayerOptions } from '@rivmux/protocol'
 
-export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
+const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
   playback: {
     autoPlay: true,
     muted: false,
@@ -25,13 +25,8 @@ export const DEFAULT_RIVMUX_PLAYER_OPTIONS: NormalizedRivmuxPlayerOptions = {
       jitterRatio: 0.2,
     },
   },
-  runtime: {
-    preferWorkerMse: true,
-  },
-  diagnostics: {
-    statsIntervalMs: 1000,
-    debug: false,
-  },
+  runtime: {},
+  diagnostics: { statsIntervalMs: 1000 },
 }
 
 export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): NormalizedRivmuxPlayerOptions {
@@ -70,7 +65,6 @@ export function normalizePlayerOptions(options: RivmuxPlayerOptions = {}): Norma
 function validateNormalizedOptions(options: NormalizedRivmuxPlayerOptions): void {
   validateLatencyOptions(options)
   validateNetworkOptions(options)
-  validateRuntimeOptions(options)
 }
 
 function validateLatencyOptions(options: NormalizedRivmuxPlayerOptions): void {
@@ -109,19 +103,8 @@ function validateNetworkOptions(options: NormalizedRivmuxPlayerOptions): void {
   }
 }
 
-function validateRuntimeOptions(options: NormalizedRivmuxPlayerOptions): void {
-  if (options.runtime.preferWorkerMse !== true) {
-    throwOptionError(
-      'unsupported',
-      'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK',
-      'Main-thread MSE fallback is not implemented; runtime.preferWorkerMse must remain true.'
-    )
-  }
-}
-
 function normalizeRuntimeOptions(options: RivmuxPlayerOptions): NormalizedRivmuxPlayerOptions['runtime'] {
   return {
-    preferWorkerMse: options.runtime?.preferWorkerMse ?? DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime.preferWorkerMse,
     ...(options.runtime?.workerUrl === undefined ? {} : { workerUrl: options.runtime.workerUrl }),
     ...(options.runtime?.wasmUrl === undefined ? {} : { wasmUrl: options.runtime.wasmUrl }),
   }

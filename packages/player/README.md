@@ -94,9 +94,9 @@ type RivmuxCapabilities = {
 }
 ```
 
-`isSupported()` 始终等于 `getCapabilities().supported`。`supported` 只表示 Dedicated Worker、Worker MSE、流式 Fetch、ReadableStream 和 WebAssembly 等基础运行条件可用，不保证具体媒体流能够播放。
+`isSupported()` 始终等于 `getCapabilities().supported`。这里的 `supported` 是基础运行能力结果，只表示 Dedicated Worker、Worker MSE、流式 Fetch、ReadableStream 和 WebAssembly 等条件可用，不保证具体媒体流能够播放。下面解码矩阵中的 `supported` 是另一层 codec 前置探测结果，二者都不等于实际播放成功。
 
-解码矩阵通过同步的 `MediaSource.isTypeSupported()` 对代表性 codec 执行前置判断：`supported` 表示环境报告支持，`unsupported` 表示环境明确拒绝，`unknown` 表示 API 不可用或无法可靠判断。该结果不会改变输入的 Stable、Experimental 或 Roadmap 等级，也不替代真实流校验。Rivmux 取得实际 codec、profile 和 level 后，仍会使用准确 MIME 做最终 MSE 校验。
+解码矩阵通过同步的 `MediaSource.isTypeSupported()` 对代表性 codec 执行前置判断：`supported` 表示环境报告支持，`unsupported` 表示环境明确拒绝，`unknown` 表示 API 不可用或无法可靠判断。该结果不会改变输入的 Stable、Experimental 或不支持边界，也不替代真实流校验。Rivmux 取得实际 codec、profile 和 level 后，仍会使用准确 MIME 做最终 MSE 校验。
 
 能力探测不会创建 Worker、发起网络请求或修改 DOM。在 SSR 和 Node.js 环境中调用不会抛错：基础能力为 `false`，无法判断的解码能力为 `unknown`。
 
@@ -124,7 +124,7 @@ const player = new RivmuxPlayer(url, options)
 
 ## 配置项
 
-所有配置均为可选项，缺省字段会与 `DEFAULT_RIVMUX_PLAYER_OPTIONS` 合并。
+所有配置均为可选项，缺省字段会由播放器内部默认值补齐。
 
 ```ts
 import { RivmuxPlayer } from 'rivmux'
@@ -156,7 +156,6 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
   },
   diagnostics: {
     statsIntervalMs: 1000,
-    debug: false,
   },
 })
 ```
@@ -194,11 +193,12 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
 
 ### `runtime`
 
-| 配置项            | 默认值             | 含义                                                                          |
-| ----------------- | ------------------ | ----------------------------------------------------------------------------- |
-| `preferWorkerMse` | `true`             | 当前必须为 `true`；尚未实现主线程 MSE 降级。                                  |
-| `workerUrl`       | 包内 Worker URL    | 高级配置，用于覆盖包内 Dedicated Worker 脚本 URL。                            |
-| `wasmUrl`         | 包内 WASM 模块 URL | 高级配置，用于覆盖 WASM URL；必须与包含 wasm-bindgen 胶水的 Worker 版本匹配。 |
+`runtime.workerUrl` 和 `runtime.wasmUrl` 是 Experimental 资产部署覆盖项；它们嵌套在稳定的 `RivmuxPlayerOptions` 形状中，但不改变当前固定的 Worker MSE runtime，也不承诺跨 bundler、CSP 或部署方式的长期兼容性。
+
+| 配置项      | 默认值             | 含义                                                                          |
+| ----------- | ------------------ | ----------------------------------------------------------------------------- |
+| `workerUrl` | 包内 Worker URL    | 高级配置，用于覆盖包内 Dedicated Worker 脚本 URL。                            |
+| `wasmUrl`   | 包内 WASM 模块 URL | 高级配置，用于覆盖 WASM URL；必须与包含 wasm-bindgen 胶水的 Worker 版本匹配。 |
 
 ### Worker/WASM 资产部署
 
@@ -219,17 +219,16 @@ const player = new RivmuxPlayer('https://example.com/live.flv', {
 
 ### `diagnostics`
 
-| 配置项            | 默认值  | 含义                                                         |
-| ----------------- | ------- | ------------------------------------------------------------ |
-| `statsIntervalMs` | `1000`  | 请求的统计上报间隔，单位为毫秒；运行时会在内部限制实际范围。 |
-| `debug`           | `false` | 在运行时已实现的范围内启用调试行为。                         |
+| 配置项            | 默认值 | 含义                                                         |
+| ----------------- | ------ | ------------------------------------------------------------ |
+| `statsIntervalMs` | `1000` | 请求的统计上报间隔，单位为毫秒；运行时会在内部限制实际范围。 |
 
 ## 事件
 
 ```ts
 import type { MediaInfo, PlayerError, PlayerStats, PlayerWarning, ReconnectInfo, RecoveryInfo } from 'rivmux'
 
-player.on('ready', () => {})
+player.on('initialized', () => {})
 player.on('mediaInfo', (info: MediaInfo) => {})
 player.on('stats', (stats: PlayerStats) => {})
 player.on('warning', (warning: PlayerWarning) => {})
@@ -240,17 +239,17 @@ player.on('stopped', () => {})
 player.on('destroyed', () => {})
 ```
 
-| 事件           | 数据            | 含义                                                               |
-| -------------- | --------------- | ------------------------------------------------------------------ |
-| `ready`        | `undefined`     | Worker runtime 已初始化。                                          |
-| `mediaInfo`    | `MediaInfo`     | 已识别媒体容器和 codec 信息。                                      |
-| `stats`        | `PlayerStats`   | 字节数、缓冲、延迟和播放状态等运行时统计。                         |
-| `warning`      | `PlayerWarning` | Runtime 报告的可恢复问题。                                         |
-| `reconnecting` | `ReconnectInfo` | 已确定执行下一次连接，并给出连接序号、最大次数、延迟和故障原因。   |
-| `recovered`    | `RecoveryInfo`  | 新会话的首个媒体片段已经成功追加；仅建立 HTTP 连接不会触发该事件。 |
-| `error`        | `PlayerError`   | Runtime、网络、demux、codec、mux、MSE 或环境不支持错误。           |
-| `stopped`      | `undefined`     | 播放已停止，媒体源已解绑。                                         |
-| `destroyed`    | `undefined`     | Worker runtime 已销毁。                                            |
+| 事件           | 数据            | 含义                                                                                                         |
+| -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `initialized`  | `undefined`     | `attach()` 期间所选 runtime 完成 `init` 后触发；同一 runtime 实例只触发一次，不表示 `canplay` 或 `playing`。 |
+| `mediaInfo`    | `MediaInfo`     | 已识别媒体容器和 codec 信息。                                                                                |
+| `stats`        | `PlayerStats`   | 字节数、缓冲、延迟和播放状态等运行时统计。                                                                   |
+| `warning`      | `PlayerWarning` | Runtime 报告的可恢复问题。                                                                                   |
+| `reconnecting` | `ReconnectInfo` | 已确定执行下一次连接，并给出连接序号、最大次数、延迟和故障原因。                                             |
+| `recovered`    | `RecoveryInfo`  | 新会话的首个媒体片段已经成功追加；仅建立 HTTP 连接不会触发该事件。                                           |
+| `error`        | `PlayerError`   | Runtime、网络、demux、codec、mux、MSE 或环境不支持错误。                                                     |
+| `stopped`      | `undefined`     | 播放已停止，媒体源已解绑。                                                                                   |
+| `destroyed`    | `undefined`     | Worker runtime 已销毁。                                                                                      |
 
 用户事件监听器中的异常属于宿主应用异常，不属于 Rivmux 播放错误，也不会转换为 `PlayerError`。单个监听器抛出异常时，其他监听器仍会继续执行，`stop()`、`destroy()` 等生命周期 Promise 也会按内部状态正常完成。Rivmux 会优先通过平台的 `globalThis.reportError()` 报告该异常；平台不支持时使用 `console.error()` 降级报告。
 
@@ -289,7 +288,7 @@ HTTP `401`、`403` 和其他不可恢复的 `4xx` 不会重试。媒体解析、
 | Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC | Stable       | 浏览器解码能力是条件化的  |
 | Enhanced HTTP-FLV + AV1                  | Experimental | 暂不形成稳定公共承诺      |
 | Enhanced HTTP-FLV + Opus                 | Experimental | 暂不形成稳定公共承诺      |
-| MPEG-TS                                  | Roadmap      | 当前不支持                |
+| MPEG-TS                                  | 不支持       | 不属于当前产品输入边界    |
 
 HEVC Stable 的具体范围是单视频轨、固定 codec 配置、Enhanced FLV `SequenceStart`、`CodedFrames` 和 HEVC `CodedFramesX`，输出 sample entry 为 `hvc1`。最终解码能力取决于浏览器、操作系统、设备以及具体 HEVC profile、level、bit depth 和 chroma format；Rivmux 不维护固定 profile/level allowlist。结构合法但环境不支持准确 MIME 时会产生终止错误 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
 
@@ -308,6 +307,7 @@ import type {
   NetworkOptions,
   PlaybackOptions,
   PlayerError,
+  PlayerErrorCause,
   PlayerStats,
   PlayerWarning,
   ReconnectInfo,
@@ -321,4 +321,4 @@ import type {
 } from 'rivmux'
 ```
 
-需要读取已经补齐默认值的配置对象时，可使用 `normalizePlayerOptions(options)`。当前公开 API 手动维护，完整且长期稳定的 API 手册将在 1.0 冻结阶段复核。
+主包只公开播放器、能力探测函数和稳定的配置、事件、错误及统计类型；配置归一化和错误构造函数属于内部实现。

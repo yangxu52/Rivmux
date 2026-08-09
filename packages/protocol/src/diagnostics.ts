@@ -25,18 +25,24 @@ export type PlayerStats = {
 /** High-level category for a player error. */
 export type PlayerErrorKind = 'network' | 'unsupported' | 'demux' | 'codec' | 'mux' | 'mse' | 'runtime'
 
+/** Serializable error details carried across the Worker boundary. */
+export type PlayerErrorCause = {
+  name: string
+  message: string
+}
+
 /** Structured error emitted by the player and runtime. */
 export type PlayerError = {
   kind: PlayerErrorKind
   code: string
   message: string
   terminal: boolean
-  cause?: unknown
+  cause?: PlayerErrorCause
 }
 
 /** Structured recoverable warning emitted by the player and runtime. */
 export type PlayerWarning = {
   code: string
   message: string
-  cause?: unknown
+  cause?: PlayerErrorCause
 }

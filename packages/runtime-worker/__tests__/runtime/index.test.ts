@@ -1986,7 +1986,7 @@ function createOptions(): NormalizedRivmuxPlayerOptions {
       readIdleTimeoutMs: 10_000,
       retry: { maxAttempts: 3, backoffMs: 500, maxBackoffMs: 8_000, jitterRatio: 0.2 },
     },
-    runtime: { preferWorkerMse: true },
-    diagnostics: { statsIntervalMs: 1000, debug: false },
+    runtime: {},
+    diagnostics: { statsIntervalMs: 1000 },
   }
 }

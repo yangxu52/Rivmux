@@ -20,12 +20,12 @@ describe('RivmuxPlayer', () => {
       idFactory: () => 'player-1',
     })
 
-    const ready = vi.fn()
+    const initialized = vi.fn()
     const mediaInfo = vi.fn()
     const stats = vi.fn()
     const stopped = vi.fn()
     const destroyed = vi.fn()
-    player.on('ready', ready)
+    player.on('initialized', initialized)
     player.on('mediaInfo', mediaInfo)
     player.on('stats', stats)
     player.on('stopped', stopped)
@@ -38,7 +38,6 @@ describe('RivmuxPlayer', () => {
     expect(worker.commands[0]).toMatchObject({ type: 'init', id: 'player-1', url: 'https://example.test/live.flv' })
     expect(worker.commands[0]?.options).toMatchObject({
       runtime: {
-        preferWorkerMse: true,
         wasmUrl: expect.any(String),
       },
     })
@@ -48,7 +47,7 @@ describe('RivmuxPlayer', () => {
     worker.emit({ type: 'media-source-handle', handle: {} as MediaSourceHandle })
     await attachPromise
 
-    expect(ready).toHaveBeenCalledTimes(1)
+    expect(initialized).toHaveBeenCalledTimes(1)
     expect(video.srcObject).toStrictEqual({})
     expect(video.autoplay).toBe(true)
 

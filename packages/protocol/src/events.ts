@@ -26,7 +26,7 @@ export type RecoveryInfo = {
 
 /** Payload map for player events. */
 export type PlayerEventMap = {
-  ready: undefined
+  initialized: undefined
   mediaInfo: MediaInfo
   stats: PlayerStats
   warning: PlayerWarning

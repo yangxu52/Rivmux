@@ -1,7 +1,6 @@
 import { LatencyController } from '../latency/latency-controller'
 import { getRetryDelayMs } from '../loader/retry-policy'
 import { raceLifecycleOperation } from './lifecycle'
-import { mergeOptions } from './options'
 import { createPlayerStats, updateAppendQueueHighWaterMark } from './stats'
 import { RuntimeSession } from './session'
 
@@ -126,12 +125,6 @@ export class RuntimeWorker {
           return
         case 'stop':
           await this.stop()
-          return
-        case 'update-options':
-          this.options = this.options === undefined ? undefined : mergeOptions(this.options, command.options)
-          if (this.options !== undefined) {
-            this.latencyController = createLatencyController(this.options)
-          }
           return
         case 'video-state':
           this.videoState = command.state
@@ -602,7 +595,7 @@ function waitForDelay(delayMs: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-function serializeCause(cause: unknown): unknown {
+function serializeCause(cause: unknown): { name: string; message: string } {
   if (cause instanceof Error) {
     return {
       name: cause.name,
@@ -610,7 +603,15 @@ function serializeCause(cause: unknown): unknown {
     }
   }
 
-  return cause
+  if (typeof cause === 'object' && cause !== null) {
+    const value = cause as { name?: unknown; message?: unknown }
+    return {
+      name: typeof value.name === 'string' ? value.name : 'Error',
+      message: typeof value.message === 'string' ? value.message : String(cause),
+    }
+  }
+
+  return { name: 'Error', message: String(cause) }
 }
 
 function detectWorkerRuntime(): PlayerError | undefined {

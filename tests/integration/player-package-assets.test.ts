@@ -21,10 +21,12 @@ describe('published player and runtime-worker assets', () => {
     await expect(Promise.all(assets.map((asset) => assertNonEmptyFile(resolve(runtimeWorkerDistDir, asset))))).resolves.toBeDefined()
   })
 
-  it('keeps the default wasm asset owned by the worker bundle', async () => {
-    const { DEFAULT_RIVMUX_PLAYER_OPTIONS } = (await import('../../packages/player/dist/index.js')) as typeof import('../../packages/player/dist/index.js')
+  it('keeps low-level defaults private while the facade injects the packaged wasm URL', async () => {
+    const playerModule = (await import('../../packages/player/dist/index.js')) as typeof import('../../packages/player/dist/index.js')
 
-    expect(DEFAULT_RIVMUX_PLAYER_OPTIONS.runtime.wasmUrl).toBeUndefined()
+    expect('DEFAULT_RIVMUX_PLAYER_OPTIONS' in playerModule).toBe(false)
+    expect('normalizePlayerOptions' in playerModule).toBe(false)
+    expect('createPlayerError' in playerModule).toBe(false)
   })
 
   it('keeps generated declarations resolvable for a consumer', async () => {
@@ -38,10 +40,26 @@ describe('published player and runtime-worker assets', () => {
 
     expect(declarationBundle).not.toContain('from "rivmux-protocol"')
     expect(declarationBundle).toContain('from "@rivmux/protocol"')
+    expect(declarations[0]).not.toContain('RivmuxPlayerInternals')
+    expect(declarations[0]).not.toContain('NormalizedRivmuxPlayerOptions')
+    expect(declarations[0]).not.toContain('@rivmux/runtime-worker')
 
     const diagnostics = compileConsumerTypes()
 
     expect(formatDiagnostics(diagnostics)).toBe('')
+  })
+
+  it('keeps development toolchain constraints out of browser package manifests', async () => {
+    const manifests = await Promise.all(
+      ['player', 'protocol', 'runtime-worker'].map(async (packageName) => {
+        const contents = await readFile(resolve(process.cwd(), `packages/${packageName}/package.json`), 'utf8')
+        return JSON.parse(contents) as { engines?: unknown }
+      })
+    )
+
+    for (const manifest of manifests) {
+      expect(manifest.engines).toBeUndefined()
+    }
   })
 })
 

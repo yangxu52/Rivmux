@@ -43,20 +43,16 @@ export type NetworkOptions = {
 
 /** Advanced runtime asset deployment options. */
 export type RuntimeOptions = {
-  /** Must remain true while M1 supports only worker-backed Media Source Extensions. */
-  preferWorkerMse?: boolean
   /** Overrides the packaged Dedicated Worker script URL. */
   workerUrl?: string
   /** Overrides the WASM binary URL used by the packaged wasm-bindgen runtime. */
   wasmUrl?: string
 }
 
-/** Diagnostics and debug reporting options. */
+/** Runtime diagnostics reporting options. */
 export type DiagnosticsOptions = {
   /** Requested runtime stats interval in milliseconds. */
   statsIntervalMs?: number
-  /** Enables debug-oriented behavior where supported by the runtime. */
-  debug?: boolean
 }
 
 /** Top-level options accepted by `new RivmuxPlayer(url, options)`. */
@@ -84,12 +80,13 @@ export type NormalizedNetworkOptions = {
 }
 
 export type NormalizedRuntimeOptions = {
-  preferWorkerMse: boolean
   workerUrl?: string
   wasmUrl?: string
 }
 
-export type NormalizedDiagnosticsOptions = Required<DiagnosticsOptions>
+export type NormalizedDiagnosticsOptions = {
+  statsIntervalMs: number
+}
 
 /** Fully populated player options after defaults are applied. */
 export type NormalizedRivmuxPlayerOptions = {

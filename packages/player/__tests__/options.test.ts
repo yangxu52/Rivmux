@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizePlayerOptions } from '../src/index'
+import { normalizePlayerOptions } from '../src/options'
 
 import type { RivmuxPlayerOptions } from '../src/index'
 
@@ -13,7 +13,7 @@ describe('normalizePlayerOptions', () => {
         headers: { Authorization: 'Bearer test' },
         retry: { maxAttempts: 5 },
       },
-      diagnostics: { debug: true },
+      diagnostics: { statsIntervalMs: 1500 },
     })
 
     expect(options.playback).toStrictEqual({ autoPlay: false, muted: false })
@@ -26,10 +26,8 @@ describe('normalizePlayerOptions', () => {
       readIdleTimeoutMs: 10_000,
       retry: { maxAttempts: 5, backoffMs: 500, maxBackoffMs: 8_000, jitterRatio: 0.2 },
     })
-    expect(options.runtime).toMatchObject({
-      preferWorkerMse: true,
-    })
-    expect(options.diagnostics).toStrictEqual({ statsIntervalMs: 1000, debug: true })
+    expect(options.runtime).toStrictEqual({})
+    expect(options.diagnostics).toStrictEqual({ statsIntervalMs: 1500 })
   })
 
   it('keeps explicit runtime asset overrides', () => {
@@ -41,7 +39,6 @@ describe('normalizePlayerOptions', () => {
     })
 
     expect(options.runtime).toStrictEqual({
-      preferWorkerMse: true,
       workerUrl: '/assets/rivmux-runtime-worker.js',
       wasmUrl: '/assets/custom-core.wasm',
     })
@@ -53,10 +50,6 @@ describe('normalizePlayerOptions', () => {
     expectOptionError({ latency: { backwardBuffer: -1 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
     expectOptionError({ latency: { target: 2, max: 1.5 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
     expectOptionError({ latency: { target: 2, maxForwardBuffer: 1.5 } }, 'RIVMUX_INVALID_LATENCY_OPTION')
-  })
-
-  it('rejects runtime options that are not implemented by the M1 pipeline', () => {
-    expectOptionError({ runtime: { preferWorkerMse: false } }, 'RIVMUX_UNSUPPORTED_MAIN_THREAD_MSE_FALLBACK')
   })
 
   it('normalizes explicit network recovery options', () => {

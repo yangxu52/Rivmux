@@ -18,7 +18,7 @@ describe('createRuntimeWorker', () => {
     }
     vi.stubGlobal('Worker', MockWorker)
 
-    const worker = createRuntimeWorker(createOptions({ preferWorkerMse: true, workerUrl: 'https://cdn.example.test/rivmux-runtime-worker.js' }))
+    const worker = createRuntimeWorker(createOptions({ workerUrl: 'https://cdn.example.test/rivmux-runtime-worker.js' }))
 
     expect(worker).toBeInstanceOf(MockWorker)
     expect(calls).toStrictEqual([
@@ -39,6 +39,6 @@ function createOptions(runtime: NormalizedRivmuxPlayerOptions['runtime']): Norma
     latency: { startupBuffer: 0.35, target: 1.2, max: 2.5, maxForwardBuffer: 4, backwardBuffer: 1.5 },
     network: { headers: {}, credentials: 'same-origin', retry: { maxAttempts: 3, backoffMs: 500 } },
     runtime,
-    diagnostics: { statsIntervalMs: 1000, debug: false },
+    diagnostics: { statsIntervalMs: 1000 },
   }
 }

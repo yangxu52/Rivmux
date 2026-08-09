@@ -14,12 +14,12 @@ describe('PlayerEventEmitter', () => {
     const events = new PlayerEventEmitter()
     const failure = new Error('listener failed')
     const laterListener = vi.fn()
-    events.on('ready', () => {
+    events.on('initialized', () => {
       throw failure
     })
-    events.on('ready', laterListener)
+    events.on('initialized', laterListener)
 
-    expect(() => events.emit('ready', undefined)).not.toThrow()
+    expect(() => events.emit('initialized', undefined)).not.toThrow()
     expect(reportError).toHaveBeenCalledWith(failure)
     expect(laterListener).toHaveBeenCalledOnce()
   })
