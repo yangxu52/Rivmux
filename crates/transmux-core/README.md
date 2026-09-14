@@ -2,16 +2,16 @@
 
 `rivmux_transmux_core` 是 Rivmux 的 Rust/WASM 转封装核心，负责 HTTP-FLV 解析、音视频归一化和 fragmented MP4 片段生成。它由 `@rivmux/runtime-worker` 在 Dedicated Worker 中加载，普通用户不应直接调用。
 
-当前公开输入契约包括 HTTP-FLV + AVC/H.264 + AAC-LC，以及限定范围内的 Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC。HEVC Stable 仅表示该范围内的解析、转封装、错误行为和生命周期契约稳定；浏览器最终是否能解码仍取决于环境和具体 codec profile。AV1、Opus 保持 Experimental，MPEG-TS 为 Roadmap。
+当前 Rivmux 公共输入契约包括 HTTP-FLV + AVC/H.264 + AAC-LC，以及限定范围内的 Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC。HEVC Stable 仅表示该范围内的解析、转封装、错误行为和生命周期契约稳定；浏览器最终是否能解码仍取决于环境和具体 codec profile。AV1、Opus 保持 Experimental，MPEG-TS 不在当前产品输入范围内。Core 对其他 Enhanced FLV codec 的解析能力不自动构成主包的 Stable 承诺。
 
 HEVC Stable 不包含 `hev1`、多轨、动态 codec 配置切换或 HEVC + Opus。结构合法但 MSE 不支持准确 codec MIME 时，由上层映射为 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
 
 ## 内部媒体契约
 
 - 解复用器必须先发出 `TrackConfig`，再发出属于该轨道的 `EncodedSample`。
-- `TrackClock` 同时保存输入容器与 fMP4 的时标。当前 FLV 视频保持 `1000 -> 1000`，AAC 保持 `1000 -> sample_rate`，Opus 保持 `1000 -> 48000`；未来 MPEG-TS 可使用 `90000` 输入时标而不改变 fMP4 + MSE 输出路径。
+- `TrackClock` 同时保存输入容器与 fMP4 的时标。当前 FLV 视频保持 `1000 -> 1000`，AAC 保持 `1000 -> sample_rate`，Opus 保持 `1000 -> 48000`；其他容器不属于当前产品输入契约。
 - `VideoCodecConfig` 和 `AudioCodecConfig` 是可扩展的判别联合。具体 codec 配置不依赖容器，fMP4 sample entry 由 codec 专属实现生成。
 - 解复用器将容器载荷交给视频或音频归一化器；归一化器只产出 codec 配置和 `EncodedSample`，不依赖 fMP4 事件。当前支持 AVC/HEVC length-prefixed NAL/Annex-B、AV1 OBU temporal unit、AAC raw access unit/ADTS 与 Opus packet；未来容器只需构造相同的归一化输入。
 - HEVC 归一化固定输出 `hvc1`：VPS/SPS/PPS 缓存并写入 `hvcC`，从媒体样本移除带内参数集；IRAP NAL（16–21）会标记为同步帧。`hev1` 不在当前 fMP4 + MSE 输出契约内。
 - AV1 归一化固定输出 `av01`：`av1C` 作为带外配置，OBU temporal unit 原样写入样本；同步帧标记由输入容器提供。
-- FLV 输入支持传统 AVC/AAC、单视频轨 Enhanced FLV 的 `avc1`、`hvc1`、`av01`，以及 Enhanced Audio FourCC `Opus`。Opus 要求非空 `OpusHead`、mono/stereo、mapping family 0；`MultichannelConfig`、`Multitrack` 与 `ModEx` 返回不支持错误。Enhanced Video 当前处理 `SequenceStart`、`CodedFrames`，以及 AVC/HEVC 的 `CodedFramesX`；视频 metadata 会告警跳过，`ModEx`、MPEG-2 TS SequenceStart 与多轨视频返回不支持错误。为兼容 FFmpeg 在 AV1 编码器产生 `av1C` 前发出的空 `SequenceStart`，该标签会告警跳过，后续非空配置照常生效。
+- FLV 输入支持传统 AVC/AAC、单视频轨 Enhanced FLV 的 `avc1`、`hvc1`、`av01`，以及 Enhanced Audio FourCC `Opus`。其中 Enhanced `avc1`、AV1 和 Opus 是 Core 的实现层能力，不自动进入主包 Stable 输入矩阵。Opus 要求非空 `OpusHead`、mono/stereo、mapping family 0；`MultichannelConfig`、`Multitrack` 与 `ModEx` 返回不支持错误。Enhanced Video 当前处理 `SequenceStart`、`CodedFrames`，以及 AVC/HEVC 的 `CodedFramesX`；视频 metadata 会告警跳过，`ModEx`、MPEG-2 TS SequenceStart 与多轨视频返回不支持错误。为兼容 FFmpeg 在 AV1 编码器产生 `av1C` 前发出的空 `SequenceStart`，该标签会告警跳过，后续非空配置照常生效。

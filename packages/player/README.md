@@ -14,6 +14,8 @@ pnpm add rivmux
 npm install rivmux
 ```
 
+当前发布目标是浏览器 ESM Bundler。Vite 已完成验证，其他 bundler 暂不形成兼容承诺。包的 `exports` 只提供 `import` 和类型条件，不提供 CommonJS、UMD 或全局变量入口。Node.js 仅支持 ESM 导入以及 SSR/能力探测调用，不提供 Node 播放运行时。
+
 ## 基本用法
 
 调用 `start()` 前必须等待 `attach()` 完成。`attach()` 会初始化 Worker，并把内部 `MediaSourceHandle` 连接到 video 元素。
@@ -282,17 +284,17 @@ HTTP `401`、`403` 和其他不可恢复的 `4xx` 不会重试。媒体解析、
 
 ## Codec 支持边界
 
-| 输入                                     | 等级         | 说明                      |
-| ---------------------------------------- | ------------ | ------------------------- |
-| HTTP-FLV + AVC/H.264 + AAC-LC            | Stable       | 受浏览器基础 MSE 能力约束 |
-| Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC | Stable       | 浏览器解码能力是条件化的  |
-| Enhanced HTTP-FLV + AV1                  | Experimental | 暂不形成稳定公共承诺      |
-| Enhanced HTTP-FLV + Opus                 | Experimental | 暂不形成稳定公共承诺      |
-| MPEG-TS                                  | 不支持       | 不属于当前产品输入边界    |
+| 输入                                     | 等级         | 说明                               |
+| ---------------------------------------- | ------------ | ---------------------------------- |
+| HTTP-FLV + AVC/H.264 + AAC-LC            | Stable       | 受浏览器基础 MSE 能力约束          |
+| Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC | Stable       | 浏览器解码能力是条件化的           |
+| Enhanced HTTP-FLV + AV1                  | Experimental | 实现层实验能力，组合与兼容性未承诺 |
+| Enhanced HTTP-FLV + Opus                 | Experimental | 实现层实验能力，组合与兼容性未承诺 |
+| MPEG-TS                                  | 不支持       | 不属于当前产品输入边界             |
 
 HEVC Stable 的具体范围是单视频轨、固定 codec 配置、Enhanced FLV `SequenceStart`、`CodedFrames` 和 HEVC `CodedFramesX`，输出 sample entry 为 `hvc1`。最终解码能力取决于浏览器、操作系统、设备以及具体 HEVC profile、level、bit depth 和 chroma format；Rivmux 不维护固定 profile/level allowlist。结构合法但环境不支持准确 MIME 时会产生终止错误 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
 
-`hev1`、多轨 HEVC、播放期间动态 codec 配置切换和 HEVC + Opus 不属于 Stable 范围。AV1 与 Opus 仍为 Experimental，能力矩阵中的 `supported` 不会把它们提升为 Stable。
+`hev1`、多轨 HEVC、播放期间动态 codec 配置切换和 HEVC + Opus 不属于 Stable 范围。AV1 与 Opus 仍为 Experimental；当前未承诺它们与其他音视频 codec 的组合、浏览器兼容矩阵或稳定错误语义。能力矩阵中的 `supported` 不会把它们提升为 Stable。
 
 ## 类型导入
 
@@ -321,4 +323,4 @@ import type {
 } from 'rivmux'
 ```
 
-主包只公开播放器、能力探测函数和稳定的配置、事件、错误及统计类型；配置归一化和错误构造函数属于内部实现。
+主包会导出上例中的 Experimental `RuntimeOptions`，但它不属于 Stable 兼容承诺。配置归一化和错误构造函数属于内部实现，未导出为应用 API。

@@ -24,6 +24,8 @@ Rivmux 是面向现代浏览器的低延迟 HTTP-FLV 播放器。它把网络加
 
 HEVC Stable 表示 Rivmux 对限定输入的解析、`hvc1` 转封装、错误行为和生命周期提供稳定契约，不表示所有环境都具备 HEVC 解码能力。`hev1`、多轨 HEVC、播放期间动态 codec 配置切换以及 HEVC + Opus 不在 Stable 范围内。实际流到达后，Rivmux 会使用准确 codec string 执行最终 MSE 校验；环境不支持时产生 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
 
+AV1 和 Opus 虽然已有转封装实现，但目前只属于实验能力；具体音视频组合、浏览器兼容性和长期错误语义均未形成公共稳定承诺。其他 Enhanced FLV codec 的解析能力也不等于主包的 Stable 输入承诺，应用应以本表为准。
+
 ## 快速开始
 
 Rivmux 当前仅提供 ESM 包：
@@ -81,6 +83,8 @@ pnpm run build:release
 ```
 
 浏览器验收使用最终构建的 Worker/WASM 资产。Playground 仅用于开发调试，不属于正式示例或发布验收项。
+
+当前发布目标是浏览器 ESM Bundler。
 
 ## 许可证
 
