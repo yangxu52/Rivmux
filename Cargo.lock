@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "rivmux_transmux_core"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "rivmux_transmux_fixtures"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 dependencies = [
  "sha2",
 ]

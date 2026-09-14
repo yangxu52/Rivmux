@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0](https://github.com/yangxu52/rivmux/compare/v1.0.0-rc.1...v1.0.0) (2026-09-14)
+
+### Miscellaneous Chores
+
+- update non-major dependencies ([630e878](https://github.com/yangxu52/rivmux/commit/630e87884b07045822029e3ade04f419087e8086))
+
 ## [1.0.0-rc.1](https://github.com/yangxu52/rivmux/compare/v0.5.0...v1.0.0-rc.1) (2026-09-14)
 
 ### Features
