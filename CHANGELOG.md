@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.0-rc.1](https://github.com/yangxu52/rivmux/compare/v0.5.0...v1.0.0-rc.1) (2026-09-14)
+
+### Features
+
+- expose runtime capabilities ([844840b](https://github.com/yangxu52/rivmux/commit/844840b9618911093abea93480a23f80541963bb))
+- close public API boundaries ([fe9c6f0](https://github.com/yangxu52/rivmux/commit/fe9c6f0cccf8e238f6cb9407fc978434c244ab1d))
+- recover interrupted live streams ([c9fc06c](https://github.com/yangxu52/rivmux/commit/c9fc06c01296aba101b47011dce385f00d14a41f))
+
+### Bug Fixes
+
+- report autoplay rejection ([fad9f5c](https://github.com/yangxu52/rivmux/commit/fad9f5c70ea694c1c55d2cbcd38823fd726f8500))
+- await worker start confirmation ([7ece9d0](https://github.com/yangxu52/rivmux/commit/7ece9d043769b150acf1367ff440ed977a583121))
+- isolate user event listener failures ([b64de9a](https://github.com/yangxu52/rivmux/commit/b64de9a252fca9548b5f4ae1a1802994ccea29cf))
+
+### Documentation
+
+- align public README boundaries ([f9b4bf8](https://github.com/yangxu52/rivmux/commit/f9b4bf80932d294cc7734d388d0e11aa56b14c72))
+
+### Miscellaneous Chores
+
+- update build, test and runtime dependencies ([97f4308](https://github.com/yangxu52/rivmux/commit/97f430876b4f3bed0b6631902be520c4eff12eb1))
+
 ## [0.5.0](https://github.com/yangxu52/Rivmux/compare/v0.4.0...v0.5.0) (2026-08-01)
 
 ### Features
