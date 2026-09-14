@@ -50,32 +50,7 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
-
-          if [[ "${version}" == "${tag}" || -z "${version}" ]]; then
-            echo "::error::Tag must use the format v<version>, for example v0.1.0."
-            exit 1
-          fi
-
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid version in tag '${tag}'."
-            exit 1
-          fi
-
-          release_packages=(
-            "packages/protocol/package.json"
-            "packages/runtime-worker/package.json"
-            "packages/player/package.json"
-          )
-
-          for package_json in "${release_packages[@]}"; do
-            package_name="$(node -p "require('./${package_json}').name")"
-            package_version="$(node -p "require('./${package_json}').version")"
-
-            if [[ "${package_version}" != "${version}" ]]; then
-              echo "::error::Tag version '${version}' does not match ${package_name} version '${package_version}' in ${package_json}."
-              exit 1
-            fi
-          done
+          node scripts/validate-release.cjs --tag "${tag}"
 
           if [[ "${tag}" == *alpha* || "${tag}" == *beta* || "${tag}" == *rc* ]]; then
             echo "prerelease=true" >> "${GITHUB_OUTPUT}"
@@ -106,8 +81,24 @@ jobs:
       - name: Run build
         run: pnpm run build:release
 
-      - name: Publish packages
+      - name: Create release artifacts
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          artifact_dir="${RUNNER_TEMP}/rivmux-release"
+          rm -rf "${artifact_dir}"
+          mkdir -p "${artifact_dir}"
+          pnpm --filter @rivmux/protocol pack --pack-destination "${artifact_dir}"
+          pnpm --filter @rivmux/runtime-worker pack --pack-destination "${artifact_dir}"
+          pnpm --filter rivmux pack --pack-destination "${artifact_dir}"
+
+      - name: Validate release artifacts
+        run: node scripts/validate-release.cjs --version "${{ steps.release.outputs.version }}" --require-generated --artifacts "${RUNNER_TEMP}/rivmux-release"
+
+      - name: Publish packages
+        shell: bash
+        run: |
+          set -Eeuo pipefail
           pnpm --filter @rivmux/protocol publish --access public --no-git-checks
           pnpm --filter @rivmux/runtime-worker publish --access public --no-git-checks
           pnpm --filter rivmux publish --access public --no-git-checks
