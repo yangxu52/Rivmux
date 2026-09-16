@@ -1,17 +1,51 @@
 # Rivmux Transmux Core
 
-`rivmux_transmux_core` 是 Rivmux 的 Rust/WASM 转封装核心，负责 HTTP-FLV 解析、音视频归一化和 fragmented MP4 片段生成。它由 `@rivmux/runtime-worker` 在 Dedicated Worker 中加载，普通用户不应直接调用。
+`rivmux_transmux_core` 是 Rivmux 的 Rust/WASM 转封装核心，负责增量解析 HTTP-FLV、归一化音视频数据，并生成 fragmented MP4 初始化片段和媒体片段。
 
-当前 Rivmux 公共输入契约包括 HTTP-FLV + AVC/H.264 + AAC-LC，以及限定范围内的 Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC。HEVC Stable 仅表示该范围内的解析、转封装、错误行为和生命周期契约稳定；浏览器最终是否能解码仍取决于环境和具体 codec profile。AV1、Opus 保持 Experimental，MPEG-TS 不在当前产品输入范围内。Core 对其他 Enhanced FLV codec 的解析能力不自动构成主包的 Stable 承诺。
+## 使用边界
 
-HEVC Stable 不包含 `hev1`、多轨、动态 codec 配置切换或 HEVC + Opus。结构合法但 MSE 不支持准确 codec MIME 时，由上层映射为 `RIVMUX_UNSUPPORTED_MSE_CODEC`。
+- Rust 入口 `TransmuxCore` 提供增量输入、事件输出和状态重置能力，主要供仓库测试和 WASM 适配层使用。
+- WASM 入口 `WasmTransmuxCore` 由私有 workspace 包 `@rivmux/transmux-core` 构建，再由 [`@rivmux/runtime-worker`](../../packages/runtime-worker/README.md) 在 Dedicated Worker 中加载。
+- 普通应用不应直接依赖 Rust crate、WASM 包装层或生成资产；用户入口和完整播放行为以 [`rivmux`](../../packages/player/README.md) 为准。
+
+## 处理链路
+
+```text
+HTTP-FLV -> demux -> codec normalization -> track/sample -> fMP4 mux -> CoreEvent
+```
+
+Core 将容器输入转换为 `MediaInfo`、初始化片段、媒体片段、warning 和结构化错误等事件。网络加载、MSE、播放控制和浏览器能力判断由 Runtime Worker 与主包负责。
+
+## 能力边界
+
+| 层级              | 范围                                           | 说明                                       |
+| ----------------- | ---------------------------------------------- | ------------------------------------------ |
+| 主包 Stable       | HTTP-FLV + AVC/H.264 + AAC-LC                  | 受浏览器基础 MSE 能力约束。                |
+| 主包条件化 Stable | Enhanced HTTP-FLV + HEVC/`hvc1` + AAC-LC       | 最终解码取决于环境和具体 codec profile。   |
+| Core 实现层能力   | Enhanced `avc1`、AV1、Opus                     | 不自动构成主包 Stable 输入或组合兼容承诺。 |
+| 当前产品范围外    | MPEG-TS、`hev1`、多轨、播放期间动态 codec 配置 | 不属于当前公开输入契约。                   |
+
+HEVC 输出固定使用 `hvc1`。Core 负责生成准确 codec 信息，上层在实际流到达后执行最终 MSE MIME 校验。AV1 和 Opus 保持 Experimental。
 
 ## 内部媒体契约
 
 - 解复用器必须先发出 `TrackConfig`，再发出属于该轨道的 `EncodedSample`。
-- `TrackClock` 同时保存输入容器与 fMP4 的时标。当前 FLV 视频保持 `1000 -> 1000`，AAC 保持 `1000 -> sample_rate`，Opus 保持 `1000 -> 48000`；其他容器不属于当前产品输入契约。
-- `VideoCodecConfig` 和 `AudioCodecConfig` 是可扩展的判别联合。具体 codec 配置不依赖容器，fMP4 sample entry 由 codec 专属实现生成。
-- 解复用器将容器载荷交给视频或音频归一化器；归一化器只产出 codec 配置和 `EncodedSample`，不依赖 fMP4 事件。当前支持 AVC/HEVC length-prefixed NAL/Annex-B、AV1 OBU temporal unit、AAC raw access unit/ADTS 与 Opus packet；未来容器只需构造相同的归一化输入。
-- HEVC 归一化固定输出 `hvc1`：VPS/SPS/PPS 缓存并写入 `hvcC`，从媒体样本移除带内参数集；IRAP NAL（16–21）会标记为同步帧。`hev1` 不在当前 fMP4 + MSE 输出契约内。
-- AV1 归一化固定输出 `av01`：`av1C` 作为带外配置，OBU temporal unit 原样写入样本；同步帧标记由输入容器提供。
-- FLV 输入支持传统 AVC/AAC、单视频轨 Enhanced FLV 的 `avc1`、`hvc1`、`av01`，以及 Enhanced Audio FourCC `Opus`。其中 Enhanced `avc1`、AV1 和 Opus 是 Core 的实现层能力，不自动进入主包 Stable 输入矩阵。Opus 要求非空 `OpusHead`、mono/stereo、mapping family 0；`MultichannelConfig`、`Multitrack` 与 `ModEx` 返回不支持错误。Enhanced Video 当前处理 `SequenceStart`、`CodedFrames`，以及 AVC/HEVC 的 `CodedFramesX`；视频 metadata 会告警跳过，`ModEx`、MPEG-2 TS SequenceStart 与多轨视频返回不支持错误。为兼容 FFmpeg 在 AV1 编码器产生 `av1C` 前发出的空 `SequenceStart`，该标签会告警跳过，后续非空配置照常生效。
+- `TrackClock` 同时记录输入容器和 fMP4 的时标，时间线换算必须显式完成。
+- codec 归一化器只产生 codec 配置与 `EncodedSample`，不依赖 FLV 标签或 fMP4 事件。
+- `VideoCodecConfig` 和 `AudioCodecConfig` 保持容器无关；sample entry 与带内、带外配置由对应 codec 实现决定。
+
+## 构建与验证
+
+在仓库根目录执行：
+
+```bash
+cargo test -p rivmux_transmux_core
+cargo clippy -p rivmux_transmux_core --all-targets --all-features -- -D warnings
+pnpm --filter @rivmux/transmux-core run build
+```
+
+`pnpm` 构建通过 `wasm-pack` 生成 wasm-bindgen JavaScript 胶水、TypeScript 声明和 WASM 二进制。Runtime Worker 必须使用同一次构建产生的胶水代码与 WASM 资产。
+
+## 许可证
+
+[Apache License 2.0](./LICENSE)
