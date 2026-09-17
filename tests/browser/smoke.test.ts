@@ -150,7 +150,6 @@ describe('Rivmux browser runtime', () => {
         decoding: {
           video: { hevc: 'supported' },
           audio: { aac: 'supported' },
-          stableProfiles: { hevcAac: 'supported' },
         },
       })
       expect(mediaInfo).toContainEqual(

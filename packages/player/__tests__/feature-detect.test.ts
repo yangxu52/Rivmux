@@ -77,7 +77,6 @@ describe('public capabilities', () => {
       decoding: {
         video: { avc: 'unknown', hevc: 'unknown', av1: 'unknown' },
         audio: { aac: 'unknown', opus: 'unknown' },
-        stableProfiles: { avcAac: 'unknown', hevcAac: 'unknown' },
       },
     })
     expect(isSupported()).toBe(false)
@@ -90,7 +89,6 @@ describe('public capabilities', () => {
     expect(getCapabilities().decoding).toEqual({
       video: { avc: 'supported', hevc: 'supported', av1: 'supported' },
       audio: { aac: 'supported', opus: 'supported' },
-      stableProfiles: { avcAac: 'supported', hevcAac: 'supported' },
     })
     expect(probe.mock.calls.map(([mime]) => mime)).toEqual([
       'video/mp4; codecs="avc1.42E01E"',
@@ -101,16 +99,6 @@ describe('public capabilities', () => {
     ])
   })
 
-  it('combines stable profiles from the corresponding single codec statuses', () => {
-    installSupportedGlobals((mime) => !mime.includes('hvc1'))
-
-    expect(getCapabilities().decoding).toMatchObject({
-      video: { avc: 'supported', hevc: 'unsupported' },
-      audio: { aac: 'supported' },
-      stableProfiles: { avcAac: 'supported', hevcAac: 'unsupported' },
-    })
-  })
-
   it('maps a thrown codec probe to unknown without affecting other entries', () => {
     installSupportedGlobals((mime) => {
       if (mime.includes('av01')) throw new TypeError('probe unavailable')
@@ -119,7 +107,6 @@ describe('public capabilities', () => {
 
     expect(getCapabilities().decoding).toMatchObject({
       video: { avc: 'supported', av1: 'unknown' },
-      stableProfiles: { avcAac: 'supported' },
     })
   })
 

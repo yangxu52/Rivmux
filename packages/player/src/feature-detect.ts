@@ -67,16 +67,6 @@ function probeMime(isTypeSupported: CapabilityEnvironment['isTypeSupported'], mi
   }
 }
 
-function combineProfile(video: SupportStatus, audio: SupportStatus): SupportStatus {
-  if (video === 'unsupported' || audio === 'unsupported') {
-    return 'unsupported'
-  }
-  if (video === 'supported' && audio === 'supported') {
-    return 'supported'
-  }
-  return 'unknown'
-}
-
 function getCapabilitiesForEnvironment(environment: CapabilityEnvironment): RivmuxCapabilities {
   const runtime: RuntimeCapabilities = {
     dedicatedWorker: environment.dedicatedWorker,
@@ -101,10 +91,6 @@ function getCapabilitiesForEnvironment(environment: CapabilityEnvironment): Rivm
     decoding: {
       video,
       audio,
-      stableProfiles: {
-        avcAac: combineProfile(video.avc, audio.aac),
-        hevcAac: combineProfile(video.hevc, audio.aac),
-      },
     },
   }
 }

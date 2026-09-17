@@ -18,10 +18,6 @@ export interface DecodingCapabilities {
     aac: SupportStatus
     opus: SupportStatus
   }
-  stableProfiles: {
-    avcAac: SupportStatus
-    hevcAac: SupportStatus
-  }
 }
 
 export interface RivmuxCapabilities {

@@ -77,7 +77,7 @@ if (!isSupported()) {
 }
 
 const capabilities = getCapabilities()
-console.log(capabilities.decoding.stableProfiles.hevcAac)
+console.log(capabilities)
 ```
 
 ```ts
@@ -101,10 +101,6 @@ type RivmuxCapabilities = {
     audio: {
       aac: SupportStatus
       opus: SupportStatus
-    }
-    stableProfiles: {
-      avcAac: SupportStatus
-      hevcAac: SupportStatus
     }
   }
 }
