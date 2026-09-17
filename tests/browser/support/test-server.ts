@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { ServerResponse } from 'node:http'
 
-import { createM1StaticFmp4Fixture } from '../../fixtures/m1-static-fmp4'
+import { createM1StaticFmp4Fixture } from '../../fixtures/m1-static-fmp4.ts'
 
 import type { Plugin } from 'vitest/config'
 

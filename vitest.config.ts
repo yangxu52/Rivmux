@@ -1,7 +1,7 @@
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
-import { createBrowserTestServer } from './tests/browser/support/test-server'
+import { createBrowserTestServer } from './tests/browser/support/test-server.ts'
 
 export default defineConfig({
   test: {
