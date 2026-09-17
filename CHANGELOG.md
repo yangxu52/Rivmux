@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.1](https://github.com/yangxu52/rivmux/compare/v1.0.0...v1.0.1) (2026-09-17)
+
+### Bug Fixes
+
+- add extensions to browser test imports ([a097905](https://github.com/yangxu52/rivmux/commit/a0979053b0023c54d7fa23bc7e0ef1fdd0e74eb5))
+
+### Documentation
+
+- improve README guidance ([71feb3d](https://github.com/yangxu52/rivmux/commit/71feb3de237fe07c6e763ceed21fc32ca340462e))
+
+### Miscellaneous Chores
+
+- migrate to Vitest 5 ([000d2ea](https://github.com/yangxu52/rivmux/commit/000d2ea8aeb8827f2a3312e82ed4fe3a21895649))
+
+### Code Refactoring
+
+- remove stable capability profiles ([7ec03cf](https://github.com/yangxu52/rivmux/commit/7ec03cf8fb543cd4c2005a3f44079831cd26940c))
+
 ## [1.0.0](https://github.com/yangxu52/rivmux/compare/v1.0.0-rc.1...v1.0.0) (2026-09-14)
 
 ### Miscellaneous Chores

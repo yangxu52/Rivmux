@@ -1,6 +1,6 @@
 {
   "name": "@rivmux/protocol",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Protocol TypeScript contracts for Rivmux packages.",
   "homepage": "https://www.npmjs.com/package/@rivmux/protocol",
   "bugs": {
