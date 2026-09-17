@@ -3,7 +3,7 @@ import { userEvent } from 'vitest/browser'
 
 import { RivmuxPlayer } from '../../packages/player/dist/index.js'
 
-describe.sequential('Rivmux autoplay policy in Chromium', () => {
+describe('Rivmux autoplay policy in Chromium', { concurrent: false }, () => {
   it('reports autoplay rejection and resumes after a real user gesture', async () => {
     const streamId = 'm1-s4-autoplay-rejected'
     await resetTestStream(streamId)

@@ -37,7 +37,7 @@ type RecoveryPlayerOptions = {
   backoffMs: number
 }
 
-describe.sequential('Rivmux live recovery in Chromium', () => {
+describe('Rivmux live recovery in Chromium', { concurrent: false }, () => {
   it('recovers after the first HTTP-FLV connection ends after its first media segment', async () => {
     const streamId = 'm1-s1-unexpected-eof'
     await resetTestStreams(streamId)
