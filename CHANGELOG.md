@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2](https://github.com/yangxu52/rivmux/compare/v1.0.1...v1.0.2) (2026-09-18)
+
+### Bug Fixes
+
+- use wasm init options object ([856a9ef](https://github.com/yangxu52/rivmux/commit/856a9ef918bb4ad2e233aabcbe70ef7cb450b4a8))
+
 ## [1.0.1](https://github.com/yangxu52/rivmux/compare/v1.0.0...v1.0.1) (2026-09-17)
 
 ### Bug Fixes
