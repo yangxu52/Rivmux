@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { WasmTransmuxCoreHost, coreErrorToPlayerError, coreMediaInfoToPlayerMediaInfo, normalizeCoreEvents } from '../src/wasm/rivmux-transmux-wasm'
 import { createWasmTransmuxCoreHost, loadWasmTransmuxCoreHost } from '../src/wasm/wasm-loader'
-import { initializedWasmSources, resetInitializedWasmSources } from './stubs/rivmux-transmux-core'
+import { initializedWasmInitArgs, initializedWasmSources, resetInitializedWasmSources } from './stubs/rivmux-transmux-core'
 
 describe('runtime transmux core host', () => {
   it('normalizes wasm event arrays', () => {
@@ -140,21 +140,36 @@ describe('runtime transmux core host', () => {
 
   it('initializes the wasm-bindgen module with an explicit asset URL', async () => {
     resetInitializedWasmSources()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const host = await loadWasmTransmuxCoreHost('https://cdn.example.test/rivmux-transmux-core.wasm')
+    try {
+      const source = 'https://cdn.example.test/rivmux-transmux-core.wasm'
+      const host = await loadWasmTransmuxCoreHost(source)
 
-    expect(host).toBeInstanceOf(WasmTransmuxCoreHost)
-    expect(initializedWasmSources).toStrictEqual(['https://cdn.example.test/rivmux-transmux-core.wasm'])
+      expect(host).toBeInstanceOf(WasmTransmuxCoreHost)
+      expect(initializedWasmInitArgs).toStrictEqual([{ module_or_path: source }])
+      expect(initializedWasmSources).toStrictEqual([source])
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('uses the packaged Worker-relative WASM asset by default', async () => {
     resetInitializedWasmSources()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    await loadWasmTransmuxCoreHost(undefined)
+    try {
+      await loadWasmTransmuxCoreHost(undefined)
 
-    const source = initializedWasmSources[0]
-    expect(source).toBeInstanceOf(URL)
-    expect((source as URL).pathname).toMatch(/rivmux-transmux-core\.wasm$/u)
+      const source = initializedWasmSources[0]
+      expect(source).toBeInstanceOf(URL)
+      expect((source as URL).pathname).toMatch(/rivmux-transmux-core\.wasm$/u)
+      expect(initializedWasmInitArgs).toStrictEqual([{ module_or_path: source }])
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

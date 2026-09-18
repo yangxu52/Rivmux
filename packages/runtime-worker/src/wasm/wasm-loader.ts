@@ -13,6 +13,6 @@ export function createWasmTransmuxCoreHost(Core: TransmuxCoreWasmConstructor | u
 
 export async function loadWasmTransmuxCoreHost(wasmUrl: string | undefined): Promise<TransmuxCoreHost> {
   const source = wasmUrl ?? new URL('./rivmux-transmux-core.wasm', import.meta.url)
-  await initBundledTransmuxCore(source)
+  await initBundledTransmuxCore({ module_or_path: source })
   return createWasmTransmuxCoreHost(BundledTransmuxCore)
 }
