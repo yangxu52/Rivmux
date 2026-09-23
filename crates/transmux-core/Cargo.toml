@@ -16,6 +16,10 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
+[[bench]]
+name = "core"
+harness = false
+
 [features]
 default = ["wasm"]
 serde = ["dep:serde"]
