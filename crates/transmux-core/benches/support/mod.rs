@@ -5,11 +5,6 @@
 //! and per-sample allocations) is stable enough to measure with a plain
 //! warmup loop.
 
-#![allow(
-    dead_code,
-    reason = "benchmarks compile this module separately for each bench target"
-)]
-
 use rivmux_transmux_core::{CoreConfig, TransmuxCore};
 use std::time::{Duration, Instant};
 
@@ -45,65 +40,6 @@ impl Measurement {
             self.throughput_mib_s(),
             self.events,
         );
-    }
-}
-
-/// Runs `workload` over `stream` with a warmup phase and reports the fastest run.
-///
-/// `workload` receives the whole stream and returns how many events it observed.
-pub fn measure_stream(stream: &[u8], mut workload: impl FnMut(&[u8]) -> usize) -> Measurement {
-    for _ in 0..WARMUP_ITERATIONS {
-        workload(stream);
-    }
-
-    let mut best = Duration::MAX;
-    let mut events = 0;
-    for _ in 0..ITERATIONS {
-        let start = Instant::now();
-        events = workload(stream);
-        best = best.min(start.elapsed());
-    }
-
-    Measurement {
-        duration: best,
-        input_bytes: stream.len(),
-        events,
-    }
-}
-
-/// Runs `workload` over `stream` split into fixed-size chunks.
-///
-/// Chunk size is the dominant input-shape variable for the demuxer, so this
-/// mirrors how the runtime feeds the core from a `ReadableStream`.
-pub fn measure_chunked(
-    stream: &[u8],
-    chunk_size: usize,
-    mut workload: impl FnMut(&[u8]) -> usize,
-) -> Measurement {
-    let run = |stream: &[u8], workload: &mut dyn FnMut(&[u8]) -> usize| {
-        let mut events = 0;
-        for chunk in stream.chunks(chunk_size) {
-            events += workload(chunk);
-        }
-        events
-    };
-
-    for _ in 0..WARMUP_ITERATIONS {
-        run(stream, &mut workload);
-    }
-
-    let mut best = Duration::MAX;
-    let mut events = 0;
-    for _ in 0..ITERATIONS {
-        let start = Instant::now();
-        events = run(stream, &mut workload);
-        best = best.min(start.elapsed());
-    }
-
-    Measurement {
-        duration: best,
-        input_bytes: stream.len(),
-        events,
     }
 }
 

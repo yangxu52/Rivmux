@@ -23,7 +23,9 @@ cargo bench -p rivmux_transmux_core -- sample
 ```
 
 The bench target sets `harness = false`, so the output is a plain measurement
-table rather than libtest's `median`/`change` report.
+table rather than libtest's `median`/`change` report. Cargo passes its own
+`--bench` flag to the binary, so the group filter is resolved as the first
+argument that is not a flag; libtest flags such as `--nocapture` are tolerated.
 
 ## Method
 
@@ -61,18 +63,18 @@ part.
 
 | Benchmark                                    | Time    | Throughput |
 | -------------------------------------------- | ------- | ---------- |
-| demuxer whole (10 MiB)                       | 21.5 ms | 449 MiB/s  |
-| demuxer 64 KiB                               | 7.2 ms  | 1335 MiB/s |
-| demuxer 16 KiB                               | 7.1 ms  | 1358 MiB/s |
-| demuxer 4 KiB                                | 7.3 ms  | 1324 MiB/s |
-| demuxer 1 KiB                                | 7.8 ms  | 1245 MiB/s |
-| demuxer 256 B                                | 8.2 ms  | 1179 MiB/s |
-| sample channel `emit_samples=true` (60 MiB)  | 13.1 ms | 4368 MiB/s |
-| sample channel `emit_samples=false` (60 MiB) | 11.0 ms | 5215 MiB/s |
-| mixed tags 64 KiB (~7 MiB, 60k tags)         | 56.6 ms | 122 MiB/s  |
-| mixed tags 16 KiB                            | 57.6 ms | 120 MiB/s  |
-| mixed tags 4 KiB                             | 57.9 ms | 120 MiB/s  |
-| HEVC normalization (40 MiB)                  | 8.4 ms  | 4569 MiB/s |
+| demuxer whole (10 MiB)                       | 21.9 ms | 442 MiB/s  |
+| demuxer 64 KiB                               | 7.4 ms  | 1310 MiB/s |
+| demuxer 16 KiB                               | 7.1 ms  | 1351 MiB/s |
+| demuxer 4 KiB                                | 7.2 ms  | 1337 MiB/s |
+| demuxer 1 KiB                                | 7.5 ms  | 1283 MiB/s |
+| demuxer 256 B                                | 8.4 ms  | 1149 MiB/s |
+| sample channel `emit_samples=true` (60 MiB)  | 13.3 ms | 4314 MiB/s |
+| sample channel `emit_samples=false` (60 MiB) | 11.0 ms | 5198 MiB/s |
+| mixed tags 64 KiB (~7 MiB, 60k tags)         | 57.0 ms | 122 MiB/s  |
+| mixed tags 16 KiB                            | 57.8 ms | 120 MiB/s  |
+| mixed tags 4 KiB                             | 58.0 ms | 120 MiB/s  |
+| HEVC normalization (40 MiB)                  | 8.7 ms  | 4394 MiB/s |
 | construct ×10 000                            | 0.25 ms | —          |
 
 ## Regression coverage

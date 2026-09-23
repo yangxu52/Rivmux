@@ -139,7 +139,13 @@ fn main() {
     // be iterated on without paying for the whole suite:
     //
     //   cargo bench -p rivmux_transmux_core -- demuxer
-    let filter = std::env::args().nth(1);
+    //
+    // Cargo passes its own `--bench` flag to a `harness = false` binary, and
+    // libtest flags such as `--nocapture` may also appear, so the filter is
+    // the first argument that is not a flag.
+    let filter = std::env::args()
+        .skip(1)
+        .find(|argument| !argument.starts_with('-'));
     let wants = |group: &str| {
         filter
             .as_deref()
