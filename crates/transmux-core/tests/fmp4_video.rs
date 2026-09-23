@@ -314,10 +314,42 @@ fn read_trun_sample_duration(bytes: &[u8]) -> u32 {
     u32::from_be_bytes(bytes[offset + 20..offset + 24].try_into().unwrap())
 }
 
+fn read_trun_data_offset(bytes: &[u8]) -> i32 {
+    let offset = find_box(bytes, b"trun").expect("expected trun box");
+    i32::from_be_bytes(bytes[offset + 16..offset + 20].try_into().unwrap())
+}
+
+/// The base-data-offset must point at the first byte of the `mdat` payload.
+fn assert_mdat_data_offset(bytes: &[u8]) {
+    let mdat = find_box(bytes, b"mdat").expect("expected mdat box");
+    assert_eq!(
+        read_trun_data_offset(bytes),
+        mdat as i32 + 8,
+        "trun data offset must address the mdat payload",
+    );
+}
+
 fn read_visual_sample_entry_dimensions(bytes: &[u8], name: &[u8; 4]) -> (u16, u16) {
     let offset = find_box(bytes, name).expect("expected visual sample entry");
     (
         u16::from_be_bytes(bytes[offset + 32..offset + 34].try_into().unwrap()),
         u16::from_be_bytes(bytes[offset + 34..offset + 36].try_into().unwrap()),
     )
+}
+
+#[test]
+fn writes_trun_base_data_offset_pointing_at_the_mdat_payload() {
+    let input = build_flv(vec![
+        video_sequence_header_tag(&minimal_avcc()),
+        video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(33, false, 0, &[0x00, 0x00, 0x00, 0x01, 0x41]),
+    ]);
+    let mut core = TransmuxCore::new(CoreConfig::default());
+
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    for segment in video_media_segments(&events) {
+        assert_mdat_data_offset(&segment.bytes);
+    }
 }

@@ -4,16 +4,26 @@ use crate::muxer::fmp4::boxes::{
 use crate::sample::EncodedSample;
 use crate::track::TrackClock;
 
+/// Size of an `mdat` box header (`size` + `type`).
+const MDAT_HEADER_LEN: usize = 8;
+
 pub(super) fn build_video_media_segment(
     sequence_number: u32,
     sample: &EncodedSample,
     clock: TrackClock,
 ) -> Vec<u8> {
-    let mut moof_box = video_moof(sequence_number, sample, clock, 0);
-    let data_offset = (moof_box.len() + 8) as i32;
-    moof_box = video_moof(sequence_number, sample, clock, data_offset);
+    // `trun` always emits exactly one sample record, so the `moof` length is
+    // independent of the `data_offset` value. Measure it once with a
+    // placeholder offset, then rebuild with the real one.
+    let moof_len = video_moof(sequence_number, sample, clock, 0).len();
+    let data_offset = (moof_len + MDAT_HEADER_LEN) as i32;
 
-    concat_box(vec![moof_box, mdat(sample.data())])
+    let mut out = video_moof(sequence_number, sample, clock, data_offset);
+    debug_assert_eq!(out.len(), moof_len);
+    write_u32(&mut out, (MDAT_HEADER_LEN + sample.data().len()) as u32);
+    out.extend_from_slice(b"mdat");
+    out.extend_from_slice(sample.data());
+    out
 }
 
 pub(super) fn build_audio_media_segment(
@@ -21,11 +31,15 @@ pub(super) fn build_audio_media_segment(
     sample: &EncodedSample,
     clock: TrackClock,
 ) -> Vec<u8> {
-    let mut moof_box = audio_moof(sequence_number, sample, clock, 0);
-    let data_offset = (moof_box.len() + 8) as i32;
-    moof_box = audio_moof(sequence_number, sample, clock, data_offset);
+    let moof_len = audio_moof(sequence_number, sample, clock, 0).len();
+    let data_offset = (moof_len + MDAT_HEADER_LEN) as i32;
 
-    concat_box(vec![moof_box, mdat(sample.data())])
+    let mut out = audio_moof(sequence_number, sample, clock, data_offset);
+    debug_assert_eq!(out.len(), moof_len);
+    write_u32(&mut out, (MDAT_HEADER_LEN + sample.data().len()) as u32);
+    out.extend_from_slice(b"mdat");
+    out.extend_from_slice(sample.data());
+    out
 }
 
 fn video_moof(
@@ -128,10 +142,6 @@ fn audio_trun(sample: &EncodedSample, data_offset: i32) -> Vec<u8> {
     write_u32(&mut payload, audio_sample_duration(sample));
     write_u32(&mut payload, sample.data().len() as u32);
     write_full_box(b"trun", 1, 0x000301, payload)
-}
-
-fn mdat(data: &[u8]) -> Vec<u8> {
-    write_box(b"mdat", data.to_vec())
 }
 
 pub(super) fn sample_duration(sample: &EncodedSample) -> u32 {
