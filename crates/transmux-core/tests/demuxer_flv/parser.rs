@@ -140,3 +140,55 @@ fn flush_rejects_every_truncated_parser_boundary() {
     complete.push_chunk(&input).unwrap();
     complete.flush().unwrap();
 }
+
+#[test]
+fn parses_tens_of_thousands_of_tags_fed_one_byte_at_a_time() {
+    const TAG_COUNT: usize = 20_000;
+    let mut input = flv_header();
+    for index in 0..TAG_COUNT {
+        input.extend_from_slice(&raw_tag(18, index as u32, &[0x02, 0x00, 0x00]));
+    }
+
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    // Feeding a single byte per push maximises how many times the parser has to
+    // resume a partially buffered stream; a front-draining buffer degrades to
+    // quadratic behaviour here.
+    for byte in &input {
+        core.push_chunk(std::slice::from_ref(byte)).unwrap();
+    }
+    core.flush().unwrap();
+
+    let events = drain(&mut core);
+    let metadata_events = events
+        .iter()
+        .filter(|event| matches!(event, CoreEvent::Metadata(_)))
+        .count();
+
+    assert_eq!(metadata_events, TAG_COUNT);
+}
+
+#[test]
+fn resumes_large_tags_split_across_many_pushes() {
+    let payload = vec![0x02; 128 * 1024];
+    let tag = raw_tag(18, 0, &payload);
+    let mut input = flv_header();
+    input.extend_from_slice(&tag);
+
+    for chunk_size in [1_usize, 7, 4096, 64 * 1024] {
+        let mut core = TransmuxCore::new(CoreConfig::default());
+        for chunk in input.chunks(chunk_size) {
+            core.push_chunk(chunk).unwrap();
+        }
+        core.flush().unwrap();
+
+        let events = drain(&mut core);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                CoreEvent::Metadata(metadata)
+                    if matches!(metadata, rivmux_transmux_core::MetadataEvent::FlvScriptData { bytes, .. } if bytes == &payload)
+            )),
+            "chunk_size={chunk_size}"
+        );
+    }
+}
