@@ -17,12 +17,20 @@ pub enum EncodedSample {
         timing: SampleTiming,
         duration: Option<u32>,
         is_sync: bool,
+        #[cfg_attr(
+            feature = "serde",
+            serde(serialize_with = "crate::serde_util::bytes::serialize")
+        )]
         data: Vec<u8>,
     },
     Audio {
         track_id: TrackId,
         timing: SampleTiming,
         duration: u32,
+        #[cfg_attr(
+            feature = "serde",
+            serde(serialize_with = "crate::serde_util::bytes::serialize")
+        )]
         data: Vec<u8>,
     },
 }

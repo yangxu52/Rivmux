@@ -8,6 +8,8 @@ mod metadata;
 mod muxer;
 mod probe;
 mod sample;
+#[cfg(feature = "serde")]
+mod serde_util;
 mod timeline;
 mod track;
 mod transmuxer;

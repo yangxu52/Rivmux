@@ -39,6 +39,10 @@ pub struct InitSegment {
     pub track: TrackKind,
     pub codec: String,
     pub timescale: u32,
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "crate::serde_util::bytes::serialize")
+    )]
     pub bytes: Vec<u8>,
 }
 
@@ -50,6 +54,10 @@ pub struct MediaSegment {
     pub dts_start_ms: i64,
     pub dts_end_ms: i64,
     pub keyframe: bool,
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "crate::serde_util::bytes::serialize")
+    )]
     pub bytes: Vec<u8>,
 }
 

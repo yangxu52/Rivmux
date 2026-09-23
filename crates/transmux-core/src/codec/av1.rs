@@ -12,6 +12,10 @@ pub struct Av1Config {
     pub codec_string: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "crate::serde_util::bytes::serialize")
+    )]
     pub av1c: Vec<u8>,
 }
 

@@ -14,6 +14,10 @@ pub struct AacConfig {
     pub object_type: u8,
     pub sample_rate: u32,
     pub channel_count: u8,
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "crate::serde_util::bytes::serialize")
+    )]
     pub audio_specific_config: Vec<u8>,
 }
 

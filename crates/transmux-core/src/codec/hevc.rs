@@ -19,6 +19,10 @@ pub struct HevcConfig {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub nal_length_size: u8,
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "crate::serde_util::bytes::serialize")
+    )]
     pub hvcc: Vec<u8>,
 }
 
