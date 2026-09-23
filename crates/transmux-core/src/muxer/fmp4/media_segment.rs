@@ -7,19 +7,32 @@ use crate::track::TrackClock;
 /// Size of an `mdat` box header (`size` + `type`).
 const MDAT_HEADER_LEN: usize = 8;
 
+// `moof` size is a compile-time constant: `trun` always carries one sample
+// record with fixed flags, `tfdt` always uses version 1 and the track id is
+// always a `u32`, so nothing in the box layout depends on the sample payload.
+const MOOF_HEADER_LEN: usize = 8;
+const MFHD_LEN: usize = 8 + 4 + 4;
+const TRAF_HEADER_LEN: usize = 8;
+const TFHD_LEN: usize = 8 + 4 + 4;
+const TFDT_V1_LEN: usize = 8 + 4 + 8;
+const TRUN_VIDEO_LEN: usize = 8 + 4 + 4 + 4 + 4 + 4 + 4 + 4;
+const TRUN_AUDIO_LEN: usize = 8 + 4 + 4 + 4 + 4 + 4;
+const VIDEO_MOOF_LEN: usize =
+    MOOF_HEADER_LEN + MFHD_LEN + TRAF_HEADER_LEN + TFHD_LEN + TFDT_V1_LEN + TRUN_VIDEO_LEN;
+const AUDIO_MOOF_LEN: usize =
+    MOOF_HEADER_LEN + MFHD_LEN + TRAF_HEADER_LEN + TFHD_LEN + TFDT_V1_LEN + TRUN_AUDIO_LEN;
+
 pub(super) fn build_video_media_segment(
     sequence_number: u32,
     sample: &EncodedSample,
     clock: TrackClock,
 ) -> Vec<u8> {
-    // `trun` always emits exactly one sample record, so the `moof` length is
-    // independent of the `data_offset` value. Measure it once with a
-    // placeholder offset, then rebuild with the real one.
-    let moof_len = video_moof(sequence_number, sample, clock, 0).len();
-    let data_offset = (moof_len + MDAT_HEADER_LEN) as i32;
-
+    // Build the `moof` once with the correct `data_offset`, then append the
+    // `mdat` header and payload directly. Rebuilding the box a second time to
+    // measure it would double the box work on every sample.
+    let data_offset = (VIDEO_MOOF_LEN + MDAT_HEADER_LEN) as i32;
     let mut out = video_moof(sequence_number, sample, clock, data_offset);
-    debug_assert_eq!(out.len(), moof_len);
+    debug_assert_eq!(out.len(), VIDEO_MOOF_LEN);
     write_u32(&mut out, (MDAT_HEADER_LEN + sample.data().len()) as u32);
     out.extend_from_slice(b"mdat");
     out.extend_from_slice(sample.data());
@@ -31,11 +44,9 @@ pub(super) fn build_audio_media_segment(
     sample: &EncodedSample,
     clock: TrackClock,
 ) -> Vec<u8> {
-    let moof_len = audio_moof(sequence_number, sample, clock, 0).len();
-    let data_offset = (moof_len + MDAT_HEADER_LEN) as i32;
-
+    let data_offset = (AUDIO_MOOF_LEN + MDAT_HEADER_LEN) as i32;
     let mut out = audio_moof(sequence_number, sample, clock, data_offset);
-    debug_assert_eq!(out.len(), moof_len);
+    debug_assert_eq!(out.len(), AUDIO_MOOF_LEN);
     write_u32(&mut out, (MDAT_HEADER_LEN + sample.data().len()) as u32);
     out.extend_from_slice(b"mdat");
     out.extend_from_slice(sample.data());
