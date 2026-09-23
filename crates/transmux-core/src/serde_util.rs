@@ -18,7 +18,9 @@ pub(crate) mod bytes {
 #[cfg(test)]
 mod tests {
     use crate::codec::aac::AacConfig;
+    use crate::codec::av1::Av1Config;
     use crate::codec::avc::AvcConfig;
+    use crate::codec::hevc::HevcConfig;
     use crate::codec::{AudioCodecConfig, VideoCodecConfig};
     use crate::event::{CoreEvent, InitSegment, MediaSegment, TrackKind};
     use crate::metadata::MetadataEvent;
@@ -293,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn codec_configuration_bytes_use_serialize_bytes() {
+    fn every_video_codec_configuration_uses_serialize_bytes() {
         assert_byte_payload(
             &VideoCodecConfig::Avc(AvcConfig {
                 codec_string: "avc1.42E01E".to_string(),
@@ -304,6 +306,29 @@ mod tests {
             }),
             1,
         );
+        assert_byte_payload(
+            &VideoCodecConfig::Hevc(HevcConfig {
+                codec_string: "hvc1.1.6.L30.90".to_string(),
+                width: Some(320),
+                height: Some(240),
+                nal_length_size: 4,
+                hvcc: vec![1, 2, 3],
+            }),
+            1,
+        );
+        assert_byte_payload(
+            &VideoCodecConfig::Av1(Av1Config {
+                codec_string: "av01.0.00M.08".to_string(),
+                width: Some(320),
+                height: Some(240),
+                av1c: vec![1, 2, 3],
+            }),
+            1,
+        );
+    }
+
+    #[test]
+    fn audio_codec_configuration_bytes_use_serialize_bytes() {
         assert_byte_payload(
             &AudioCodecConfig::Aac(AacConfig {
                 codec_string: "mp4a.40.2".to_string(),
