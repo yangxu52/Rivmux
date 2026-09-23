@@ -353,3 +353,40 @@ fn writes_trun_base_data_offset_pointing_at_the_mdat_payload() {
         assert_mdat_data_offset(&segment.bytes);
     }
 }
+
+#[test]
+fn reports_pre_keyframe_drops_once_when_joining_mid_gop() {
+    let mut tags = vec![video_sequence_header_tag(&minimal_avcc())];
+    // 600 ms of non-keyframe video before the first keyframe, as when a live
+    // stream is joined mid-GOP.
+    for index in 0..18_u32 {
+        tags.push(video_sample_tag(
+            index * 33,
+            false,
+            0,
+            &[0x00, 0x00, 0x00, 0x01, 0x41],
+        ));
+    }
+    tags.push(video_sample_tag(
+        600,
+        true,
+        0,
+        &[0x00, 0x00, 0x00, 0x01, 0x65],
+    ));
+
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    core.push_chunk(&build_flv(tags)).unwrap();
+    let events = drain(&mut core);
+
+    let drop_warnings = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CoreEvent::Warning(warning) if warning.code == "RIVMUX_VIDEO_PRE_KEYFRAME_DROPPED"
+            )
+        })
+        .count();
+
+    assert_eq!(drop_warnings, 1);
+}

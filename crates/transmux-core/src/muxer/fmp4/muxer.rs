@@ -20,6 +20,7 @@ pub(crate) struct Fmp4Muxer {
     next_video_sequence_number: u32,
     next_audio_sequence_number: u32,
     video_started: bool,
+    dropped_pre_keyframe_video: bool,
     expects_video: bool,
     expects_audio: bool,
     init_segment_mode: InitSegmentMode,
@@ -80,6 +81,7 @@ impl Fmp4Muxer {
         self.video_config = Some(config);
         self.next_video_sequence_number = 1;
         self.video_started = false;
+        self.dropped_pre_keyframe_video = false;
         self.pending_video_sample = None;
         self.last_video_sample_duration = None;
         self.emit_initial_segment_if_ready(out);
@@ -135,10 +137,15 @@ impl Fmp4Muxer {
 
         if !self.video_started {
             if !sample.is_sync() {
-                out.push(CoreEvent::Warning(CoreWarning::new(
-                    "RIVMUX_VIDEO_PRE_KEYFRAME_DROPPED",
-                    "Dropping video sample before the first keyframe.",
-                )));
+                // A stream joined mid-GOP can drop many frames before the first
+                // keyframe; report that once instead of per dropped frame.
+                if !self.dropped_pre_keyframe_video {
+                    self.dropped_pre_keyframe_video = true;
+                    out.push(CoreEvent::Warning(CoreWarning::new(
+                        "RIVMUX_VIDEO_PRE_KEYFRAME_DROPPED",
+                        "Dropping video samples before the first keyframe.",
+                    )));
+                }
                 return Ok(());
             }
             self.video_started = true;
