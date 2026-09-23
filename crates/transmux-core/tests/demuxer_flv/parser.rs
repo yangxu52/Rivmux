@@ -1,6 +1,9 @@
-use rivmux_transmux_core::{CoreConfig, CoreErrorCode, CoreEvent, TransmuxCore};
+use rivmux_transmux_core::{CoreConfig, CoreErrorCode, CoreEvent, EncodedSample, TransmuxCore};
 
-use super::support::{drain, flv_header, raw_tag, raw_tag_with_previous_size};
+use super::support::{
+    build_flv, drain, flv_header, minimal_avcc, raw_tag, raw_tag_with_previous_size,
+    video_sample_tag, video_sequence_header_tag,
+};
 
 #[test]
 fn rejects_invalid_flv_headers() {
@@ -61,6 +64,7 @@ fn rejects_tag_data_larger_than_the_configured_limit() {
     input.extend_from_slice(&raw_tag(18, 0, &[1, 2, 3]));
     let mut core = TransmuxCore::new(CoreConfig {
         max_tag_data_size: 2,
+        ..CoreConfig::default()
     });
 
     let error = core.push_chunk(&input).unwrap_err();
@@ -236,4 +240,51 @@ fn keeps_events_parsed_before_a_flush_failure() {
             CoreEvent::FatalError(_),
         ]
     ));
+}
+
+#[test]
+fn emit_samples_can_be_disabled_for_the_wasm_boundary() {
+    let input = build_flv(vec![
+        video_sequence_header_tag(&minimal_avcc()),
+        video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+        video_sample_tag(33, false, 0, &[0x00, 0x00, 0x00, 0x01, 0x41]),
+    ]);
+
+    let mut core = TransmuxCore::new(CoreConfig {
+        emit_samples: false,
+        ..CoreConfig::default()
+    });
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    // Sample events are suppressed, but media segments still carry every
+    // sample to the muxer.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, CoreEvent::Sample(_)))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, CoreEvent::MediaSegment(_)))
+    );
+}
+
+#[test]
+fn sample_events_stay_available_by_default() {
+    let input = build_flv(vec![
+        video_sequence_header_tag(&minimal_avcc()),
+        video_sample_tag(0, true, 0, &[0x00, 0x00, 0x00, 0x01, 0x65]),
+    ]);
+
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    core.push_chunk(&input).unwrap();
+    let events = drain(&mut core);
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, CoreEvent::Sample(EncodedSample::Video { .. })))
+    );
 }

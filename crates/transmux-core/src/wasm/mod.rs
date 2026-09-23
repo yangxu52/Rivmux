@@ -11,7 +11,13 @@ impl WasmTransmuxCore {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            core: TransmuxCore::new(CoreConfig::default()),
+            core: TransmuxCore::new(CoreConfig {
+                // The worker runtime consumes only init and media segments, so
+                // per-sample events would just duplicate payloads across the
+                // WASM boundary.
+                emit_samples: false,
+                ..CoreConfig::default()
+            }),
         }
     }
 

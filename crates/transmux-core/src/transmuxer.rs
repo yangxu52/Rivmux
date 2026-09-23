@@ -7,12 +7,20 @@ use crate::timeline::TimestampNormalizer;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreConfig {
     pub max_tag_data_size: usize,
+    /// Emits a `CoreEvent::Sample` for every normalized sample.
+    ///
+    /// The browser runtime only consumes init and media segments, and each
+    /// sample event duplicates the encoded payload across the WASM boundary.
+    /// The WASM adapter therefore disables this; the Rust default keeps it on
+    /// for inspection and testing.
+    pub emit_samples: bool,
 }
 
 impl Default for CoreConfig {
     fn default() -> Self {
         Self {
             max_tag_data_size: 16 * 1024 * 1024,
+            emit_samples: true,
         }
     }
 }
@@ -93,7 +101,9 @@ impl TransmuxCore {
                     let normalized = self.timeline.normalize_sample(sample);
                     self.events.extend(normalized.events);
                     let sample = normalized.sample;
-                    self.events.push(CoreEvent::Sample(sample.clone()));
+                    if self.config.emit_samples {
+                        self.events.push(CoreEvent::Sample(sample.clone()));
+                    }
                     let mut mux_events = Vec::new();
                     let mux_result = self.muxer.push_sample(sample, &mut mux_events);
                     self.events.extend(mux_events);
