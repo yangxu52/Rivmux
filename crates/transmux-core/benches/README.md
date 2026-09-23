@@ -11,8 +11,13 @@ benchmark framework is pulled in.
 ## Running
 
 ```sh
-cargo bench -p rivmux_transmux_core      # or: pnpm --filter @rivmux/transmux-core run bench
+cargo bench -p rivmux_transmux_core       # or: pnpm --filter @rivmux/transmux-core run bench
+crates/transmux-core/benches/wasm/run.sh  # or: pnpm --filter @rivmux/transmux-core run bench:wasm
 ```
+
+`cargo bench` measures the core natively. The second command builds a
+`wasm-pack --target nodejs` package and drives it from Node, because the WASM
+boundary cannot be measured on the host target (see below).
 
 Groups can be selected by substring, which is handy while iterating on one hot
 path:
@@ -41,9 +46,23 @@ argument that is not a flag; libtest flags such as `--nocapture` are tolerated.
   shape is explicit and no binary fixtures are checked in.
 - `std::hint::black_box` keeps construction from being optimized away.
 
-This measures the **Rust core**. It does not measure the WASM boundary
-(`serde_wasm_bindgen` serialization), which needs a Node driver against a
-`wasm-pack --target nodejs` build.
+## Two layers, one gap
+
+`cargo bench` runs on the host target, so it cannot observe what happens when
+events cross into JavaScript. The dominant regression this project has hit
+lives exactly there: `serde-wasm-bindgen` serializes a `Vec<u8>` as a plain
+JavaScript array by default -- one JS number per byte -- unless the payload goes
+through `serialize_bytes`.
+
+| Layer         | Tool            | Guards                                     |
+| ------------- | --------------- | ------------------------------------------ |
+| Rust core     | `cargo bench`   | demuxer, codecs, muxer, allocations        |
+| WASM boundary | `benches/wasm/` | byte payload shape and boundary throughput |
+
+The layers are complementary, not interchangeable. The Rust-side
+`serde_util::tests::codec_configuration_bytes_use_serialize_bytes` guard checks
+the _mechanism_ (that `serialize_bytes` is called) but cannot express the
+magnitude; only a real JS runtime can.
 
 ## Groups
 
@@ -54,6 +73,30 @@ This measures the **Rust core**. It does not measure the WASM boundary
 | tags         | Many small interleaved AAC+AVC tags, the audio-heavy live-stream shape                           |
 | hevc         | HEVC access-unit split and re-serialization                                                      |
 | construction | Cold `TransmuxCore::new` cost paid on attach/reconnect                                           |
+
+## WASM boundary (Node)
+
+`benches/wasm/run.sh` (or `pnpm --filter @rivmux/transmux-core run bench:wasm`)
+builds a nodejs-target package into `crates/transmux-core/wasm/dist` and drives
+it. It asserts two things and reports the numbers either way:
+
+1. **Shape** -- `trackConfig.config.codec.avc.avcc`, `initSegment.bytes` and
+   `mediaSegment.bytes` must arrive as `Uint8Array`. This is deterministic.
+2. **Ratio** -- core throughput divided by the cost of materializing the same
+   byte volume as JS numbers, measured in the same process. That self-contained
+   floor makes the ratio independent of machine speed and JIT state. The minimum
+   is **10x**.
+
+Measured on a correct build the ratio is ~78x; a build that regressed to numeric
+arrays measures ~0.65x, so the threshold sits far from both. The shape assertion
+catches the regression first, and the ratio confirms it is not merely cosmetic.
+
+Absolute MiB/s figures are printed for context only and are **not** comparable to
+the `cargo bench` rows: the WASM build uses `--no-opt` by default and runs under
+Node's JIT. Set `RIVMUX_WASM_RELEASE=1` to build with `wasm-opt -O4`.
+
+Use `--json` for machine-readable output; build output goes to stderr so stdout
+stays pipeable.
 
 ## Baseline (reference machine)
 
