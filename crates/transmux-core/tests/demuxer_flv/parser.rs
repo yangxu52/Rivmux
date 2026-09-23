@@ -192,3 +192,48 @@ fn resumes_large_tags_split_across_many_pushes() {
         );
     }
 }
+
+#[test]
+fn keeps_events_parsed_before_a_container_failure() {
+    let mut input = flv_header();
+    input.extend_from_slice(&raw_tag(18, 0, &[0x02, 0x00, 0x00]));
+    // Corrupt tag: its PreviousTagSize does not match the preceding tag.
+    input.extend_from_slice(&raw_tag_with_previous_size(18, 1, &[0x03, 0x00, 0x00], 1));
+
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    let error = core.push_chunk(&input).unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+
+    // The metadata tag decoded before the corrupt tag must still be delivered,
+    // exactly like a mux-stage failure keeps the events emitted before it.
+    let events = drain(&mut core);
+    assert!(matches!(events.as_slice(), [
+        CoreEvent::ProbeResult(_),
+        CoreEvent::Metadata(_),
+        CoreEvent::FatalError(fatal),
+    ] if fatal.code == CoreErrorCode::InvalidContainerData));
+}
+
+#[test]
+fn keeps_events_parsed_before_a_flush_failure() {
+    let mut input = flv_header();
+    input.extend_from_slice(&raw_tag(18, 0, &[0x02, 0x00, 0x00]));
+    input.extend_from_slice(&[9, 0, 0, 5]);
+
+    let mut core = TransmuxCore::new(CoreConfig::default());
+    core.push_chunk(&input).unwrap();
+    let error = core.flush().unwrap_err();
+
+    assert_eq!(error.code, CoreErrorCode::InvalidContainerData);
+
+    let events = drain(&mut core);
+    assert!(matches!(
+        events.as_slice(),
+        [
+            CoreEvent::ProbeResult(_),
+            CoreEvent::Metadata(_),
+            CoreEvent::FatalError(_),
+        ]
+    ));
+}

@@ -43,8 +43,14 @@ impl TransmuxCore {
         let demux_result = self.demuxer.push(data, &mut demux_events);
         self.muxer
             .set_expected_tracks(self.demuxer.expects_video(), self.demuxer.expects_audio());
-        self.capture_result(demux_result)?;
-        self.process_demux_events(demux_events)
+        // Deliver every event that was parsed before the failure instead of
+        // dropping the whole batch. The error is still reported through the
+        // return value and a `FatalError` event, matching mux-stage failures.
+        let process_result = self.process_demux_events(demux_events);
+        match demux_result {
+            Ok(()) => process_result,
+            Err(error) => self.capture_result(Err(error)),
+        }
     }
 
     pub fn drain_events(&mut self, out: &mut Vec<CoreEvent>) {
@@ -54,8 +60,11 @@ impl TransmuxCore {
     pub fn flush(&mut self) -> Result<(), CoreError> {
         let mut demux_events = Vec::new();
         let demux_result = self.demuxer.flush(&mut demux_events);
-        self.capture_result(demux_result)?;
-        self.process_demux_events(demux_events)?;
+        let process_result = self.process_demux_events(demux_events);
+        if let Err(error) = demux_result {
+            return self.capture_result(Err(error));
+        }
+        process_result?;
         let mut mux_events = Vec::new();
         let mux_result = self.muxer.flush(&mut mux_events);
         self.events.extend(mux_events);
