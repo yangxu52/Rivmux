@@ -181,6 +181,15 @@ function waitForSourceOpen(mediaSource: MediaSource): Promise<void> {
 }
 
 function toAppendBuffer(bytes: Uint8Array): ArrayBuffer {
+  // `appendBuffer` copies into the SourceBuffer's input buffer, so an
+  // exactly-sized typed array that owns its backing store — a merged batch from
+  // `Fmp4AppendBatcher` or a `serialize_bytes` payload from the wasm boundary —
+  // can hand that store over directly instead of copying it again. Views over a
+  // larger buffer or a shared buffer still take the copy below.
+  const buffer = bytes.buffer
+  if (bytes.byteOffset === 0 && bytes.byteLength === buffer.byteLength && buffer instanceof ArrayBuffer) {
+    return buffer
+  }
   const copy = new Uint8Array(bytes.byteLength)
   copy.set(bytes)
   return copy.buffer

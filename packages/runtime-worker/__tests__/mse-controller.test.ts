@@ -139,6 +139,47 @@ describe('MseController SourceBuffer strategy', () => {
     ).rejects.toEqual(new MseUnsupportedMimeError('audio/mp4; codecs="opus"'))
   })
 
+  it('hands an exactly-sized payload to appendBuffer without copying it', async () => {
+    const registry = installMockMse()
+    const controller = new MseController()
+    const bytes = new Uint8Array([1, 2, 3, 4])
+
+    await controller.createMediaSourceHandle()
+    await controller.appendInitSegment({
+      track: 'video',
+      codec: 'avc1.42E01E',
+      timescale: 1000,
+      bytes,
+    })
+
+    // The merged batch / wasm payload owns its store, so the append must reuse
+    // that store instead of allocating a second copy of the same bytes.
+    const appended = registry.sourceBuffers[0]?.appended[0]
+    expect(appended).toBe(bytes.buffer)
+    expect(new Uint8Array(appended as ArrayBuffer)).toStrictEqual(bytes)
+  })
+
+  it('copies a payload that is a view over a larger buffer', async () => {
+    const registry = installMockMse()
+    const controller = new MseController()
+    const backing = new Uint8Array([0, 1, 2, 3, 4, 5])
+    const view = backing.subarray(1, 4)
+
+    await controller.createMediaSourceHandle()
+    await controller.appendInitSegment({
+      track: 'video',
+      codec: 'avc1.42E01E',
+      timescale: 1000,
+      bytes: view,
+    })
+
+    const appended = registry.sourceBuffers[0]?.appended[0]
+    expect(appended).not.toBe(backing.buffer)
+    expect(appended).toBeInstanceOf(ArrayBuffer)
+    expect(new Uint8Array(appended as ArrayBuffer)).toStrictEqual(new Uint8Array([1, 2, 3]))
+    expect((appended as ArrayBuffer).byteLength).toBe(3)
+  })
+
   it('reports unsupported HEVC/AAC MIME from its muxed init segment', async () => {
     installMockMse(() => false)
     const controller = new MseController()
@@ -193,12 +234,14 @@ class MockSourceBuffer {
   updating = false
   buffered = createTimeRanges([])
   appendCount = 0
+  readonly appended: BufferSource[] = []
   private readonly listeners = new Map<string, Set<EventListener>>()
 
   constructor(readonly mimeType: string) {}
 
-  appendBuffer(): void {
+  appendBuffer(data: BufferSource): void {
     this.appendCount += 1
+    this.appended.push(data)
     this.updating = true
     queueMicrotask(() => this.finishUpdate())
   }
