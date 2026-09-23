@@ -317,6 +317,12 @@ export class RuntimeSession {
           }
           break
         }
+        // Observational events the runtime does not act on:
+        //   probeResult   -- emitted with the FLV header; the runtime does not consume it.
+        //   trackConfig   -- already folded into the core's own muxer.
+        //   sample        -- never produced on the WASM path (`emit_samples: false`).
+        //   metadata      -- FLV script data, not part of playback.
+        //   discontinuity -- timestamp rollback; the core re-bases itself.
         case 'probeResult':
         case 'trackConfig':
         case 'sample':

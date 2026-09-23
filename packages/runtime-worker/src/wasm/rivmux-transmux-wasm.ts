@@ -60,11 +60,23 @@ export type CoreEvent =
   | { type: 'mediaInfo'; data: CoreMediaInfo }
   | { type: 'initSegment'; data: CoreInitSegment }
   | { type: 'mediaSegment'; data: CoreMediaSegment }
+  /** Emitted once per track; the runtime only needs it to drive the core's own muxer. */
   | { type: 'trackConfig'; data: unknown }
+  /**
+   * Carries a fully normalized encoded sample (timing plus payload).
+   *
+   * The runtime does not consume it: every sample would duplicate the encoded
+   * payload across the WASM boundary, so the WASM adapter builds the core with
+   * `emit_samples: false` and this variant is never produced on that path. It is
+   * declared to keep the Rust-facing contract in one place and to leave room for
+   * handing samples straight to WebCodecs.
+   */
   | { type: 'sample'; data: unknown }
+  /** FLV script data (e.g. `onMetaData`). Emitted by the core; the runtime does not consume it. */
   | { type: 'metadata'; data: unknown }
   | { type: 'warning'; data: CoreWarning }
   | { type: 'fatalError'; data: CoreError }
+  /** Timestamp rollback detected by the normalizer. Emitted by the core; the runtime does not consume it. */
   | { type: 'discontinuity'; data: unknown }
 
 export type TransmuxCoreHost = {
@@ -169,6 +181,12 @@ function normalizeCoreEvent(value: unknown): CoreEvent {
       return { type: 'initSegment', data: normalizeInitSegment(data) }
     case 'mediaSegment':
       return { type: 'mediaSegment', data: normalizeMediaSegment(data) }
+    // Passed through unvalidated: the runtime does not act on these, so there is
+    // nothing to defend at the boundary yet.
+    //   trackConfig   -- already folded into the core's own muxer.
+    //   sample        -- never produced on the WASM path (`emit_samples: false`).
+    //   metadata      -- FLV script data, not part of playback.
+    //   discontinuity -- timestamp rollback; the core re-bases itself.
     case 'trackConfig':
     case 'sample':
     case 'metadata':
