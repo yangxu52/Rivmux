@@ -10,7 +10,6 @@
   "author": "yangxu52",
   "scripts": {
     "build": "pnpm --filter @rivmux/transmux-core run build && pnpm run build:packages",
-    "build:release": "pnpm --filter @rivmux/transmux-core run build:release && pnpm run build:packages",
     "build:packages": "pnpm -r --filter './packages/*' run build",
     "build:playground": "pnpm run build && pnpm --filter rivmux-playground run build",
     "test": "pnpm run test:packages && pnpm run test:workspace && pnpm run test:crates",

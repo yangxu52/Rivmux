@@ -5,9 +5,10 @@
 #   benches/wasm/run.sh            # build, then assert
 #   benches/wasm/run.sh --json     # machine-readable output
 #
-# The build is `--no-opt` unless RIVMUX_WASM_RELEASE=1 is set. wasm-opt only
-# changes codegen, not the serialization path this benchmark guards, and
-# skipping it keeps the run fast.
+# The build matches the shipped artifact: `--release --no-opt` - release
+# codegen with the workspace `strip = "symbols"`, and no wasm-opt (which the
+# crate disables because `target_features` is stripped). wasm-opt only changes
+# codegen, not the serialization path this benchmark guards.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,10 +19,7 @@ out="$crate/wasm/dist"
 # perturbs a developer's cargo caches.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/rivmux-wasm-bench-target}"
 
-profile_args=(--no-opt)
-if [[ "${RIVMUX_WASM_RELEASE:-0}" == "1" ]]; then
-  profile_args=(--release)
-fi
+profile_args=(--release --no-opt)
 
 echo "building rivmux_transmux_core for node (${profile_args[*]})" >&2
 

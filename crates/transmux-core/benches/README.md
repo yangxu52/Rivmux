@@ -92,8 +92,7 @@ arrays measures ~0.65x, so the threshold sits far from both. The shape assertion
 catches the regression first, and the ratio confirms it is not merely cosmetic.
 
 Absolute MiB/s figures are printed for context only and are **not** comparable to
-the `cargo bench` rows: the WASM build uses `--no-opt` by default and runs under
-Node's JIT. Set `RIVMUX_WASM_RELEASE=1` to build with `wasm-opt -O4`.
+the `cargo bench` rows: the WASM build runs under Node's JIT.
 
 Use `--json` for machine-readable output; build output goes to stderr so stdout
 stays pipeable.

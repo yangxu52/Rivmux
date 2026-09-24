@@ -25,11 +25,10 @@ default = ["wasm"]
 serde = ["dep:serde"]
 wasm = ["serde", "dep:serde-wasm-bindgen", "dep:wasm-bindgen"]
 
+# `strip = "symbols"` (workspace release profile) already removes the name
+# section, which is the dominant high-entropy payload. It also removes the
+# `target_features` section, so wasm-opt can no longer validate the artifact
+# and would fail. The residual code-optimization gain is ~23 B brotli, which
+# does not justify restoring wasm-opt.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = [
-  '-O4',
-  '--strip-debug',
-  '--enable-simd',
-  '--enable-bulk-memory',
-  '--enable-multivalue',
-]
+wasm-opt = false

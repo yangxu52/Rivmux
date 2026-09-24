@@ -15,3 +15,4 @@ overflow-checks = false # 禁用整数溢出检查
 lto = true              # 启用链接时优化 (Link Time Optimization)
 codegen-units = 1       # 减少代码生成单元，提高优化效果
 panic = "abort"         # 使用 abort 而不是 unwind，减小文件大小
+strip = "symbols"       # 剥离 name section（符号表），减小传输体积

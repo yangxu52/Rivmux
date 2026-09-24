@@ -46,6 +46,8 @@ pnpm --filter @rivmux/transmux-core run build
 
 `pnpm` 构建通过 `wasm-pack` 生成 wasm-bindgen JavaScript 胶水、TypeScript 声明和 WASM 二进制。Runtime Worker 必须使用同一次构建产生的胶水代码与 WASM 资产。
 
+构建固定使用 `--release --no-opt`：release 代码生成（`opt-level = "z"`、`lto`、`codegen-units = 1`、`panic = "abort"`）配合 workspace 的 `strip = "symbols"`，并跳过 wasm-opt。`strip = "symbols"` 会同时移除 `target_features` section，wasm-opt 无法再校验该产物，因此 `[package.metadata.wasm-pack.profile.release]` 设为 `wasm-opt = false`。剩余的代码优化收益（约 23 B brotli）不足以换回 wasm-opt。
+
 ## 许可证
 
 [Apache License 2.0](./LICENSE)

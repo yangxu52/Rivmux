@@ -31,8 +31,7 @@
   "scripts": {
     "bench": "cargo bench -p rivmux_transmux_core",
     "bench:wasm": "benches/wasm/run.sh",
-    "build": "wasm-pack build --no-opt --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
-    "build:release": "wasm-pack build --release --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
+    "build": "wasm-pack build --release --no-opt --target web --out-dir dist --out-name rivmux_transmux_core ../../crates/transmux-core",
     "clean": "rimraf dist node_modules/.tmp",
     "typecheck": "tsc -b"
   },

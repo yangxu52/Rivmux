@@ -1,0 +1,41 @@
+name: Install wasm-pack
+description: Cache a pinned wasm-pack install and fall back to cargo install on a cache miss
+
+inputs:
+  # The version is pinned here (not at the call sites) so a bump touches one
+  # file and the cache key below can never drift from the installed version.
+  # Override only for one-off experiments; the default is what CI ships.
+  version:
+    description: wasm-pack version to install
+    required: false
+    default: '0.15.0'
+
+runs:
+  using: composite
+  steps:
+    # `cargo install` decides a package is present from the cargo home metadata,
+    # not from the binary alone: with only `bin/wasm-pack` restored it aborts
+    # with "binary `wasm-pack` already exists in destination". `.crates.toml`
+    # (and `.crates2.json`) must travel with the binary.
+    - name: Restore wasm-pack cache
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/bin/wasm-pack
+          ~/.cargo/bin/wasm-pack.exe
+          ~/.cargo/.crates.toml
+          ~/.cargo/.crates2.json
+        key: wasm-pack-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install wasm-pack
+      shell: bash
+      run: cargo install wasm-pack --version ${{ inputs.version }} --locked
+
+    # Surfaces the actually-installed version in every job log. A corrupted
+    # or stale cache entry would show up here as a mismatch against the pin.
+    - name: Show wasm-pack version
+      shell: bash
+      run: |
+        echo "wasm-pack $(wasm-pack --version) (pinned: ${{ inputs.version }})"
+        wasm-pack --version | grep -qF "${{ inputs.version }}" || \
+          { echo "::error::installed wasm-pack does not match the pinned version ${{ inputs.version }}"; exit 1; }

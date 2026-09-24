@@ -36,10 +36,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0 --locked
-
-      - name: Install wasm-opt
-        run: cargo install wasm-opt --locked
+        uses: ./.github/actions/install-wasm-pack
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -79,7 +76,7 @@ jobs:
         run: pnpm run test:browser
 
       - name: Run build
-        run: pnpm run build:release
+        run: pnpm run build
 
       - name: Create release artifacts
         shell: bash
