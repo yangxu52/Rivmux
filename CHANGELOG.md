@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.0.3](https://github.com/yangxu52/rivmux/compare/v1.0.2...v1.0.3) (2026-09-24)
+
+### Bug Fixes
+
+- deliver events parsed before a demux failure ([98e4785](https://github.com/yangxu52/rivmux/commit/98e4785e78ebf79128067cb26459bba1bec51a5f))
+- report pre-keyframe drops once instead of per frame ([36e9352](https://github.com/yangxu52/rivmux/commit/36e935273d470aad67fdc33fbb29fd2c3e8c9f38))
+- run the benchmark groups on a plain cargo bench ([badae2c](https://github.com/yangxu52/rivmux/commit/badae2c5b792dc8f8483c4d09d29a2804ee7c75c))
+
+### Performance Improvements
+
+- reuse the owned buffer when appending to MSE ([c053d27](https://github.com/yangxu52/rivmux/commit/c053d273689eea15ff6d7e58d4a11c1615d19fe9))
+- append mdat directly in the media segment builder ([1542dfd](https://github.com/yangxu52/rivmux/commit/1542dfde3d413ba4da2fc0b0a0ea90df954934e2))
+- avoid draining the FLV buffer on every tag ([dc6ea3f](https://github.com/yangxu52/rivmux/commit/dc6ea3f206b762ca5e3ab60034462700b2090082))
+- build each media segment moof only once ([283c856](https://github.com/yangxu52/rivmux/commit/283c8560fbf26b1445da65f731d97ac3f20750d6))
+- serialize byte payloads as Uint8Array for WASM ([dbb9312](https://github.com/yangxu52/rivmux/commit/dbb93124d25b15ed381b57625bdf7d0afd6b96a2))
+- skip per-sample events in the WASM core ([ebd3fe3](https://github.com/yangxu52/rivmux/commit/ebd3fe34c72eff450a5512606177d67e295a4a35))
+
+### Documentation
+
+- note why observational core events are ignored ([59d8797](https://github.com/yangxu52/rivmux/commit/59d87978fb95ed3061e81bb6d63c3a94e0735a20))
+
+### Tests
+
+- add a WASM boundary benchmark driven from Node ([9b0bc99](https://github.com/yangxu52/rivmux/commit/9b0bc9932cae5514bd4fd861091359189f14cb92))
+- add persistent throughput benchmarks ([d07b1df](https://github.com/yangxu52/rivmux/commit/d07b1df0dad96d3cb16f0c7b4b01db36733108e4))
+- guard every codec configuration byte payload ([3e93c11](https://github.com/yangxu52/rivmux/commit/3e93c115934882fa648c7c5b1e1c6fbdfa89b060))
+
 ## [1.0.2](https://github.com/yangxu52/rivmux/compare/v1.0.1...v1.0.2) (2026-09-18)
 
 ### Bug Fixes
